@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Reporte Semanal de Ventas</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0f14}
+input::placeholder,select option{color:#4a4540}
+input:focus,select:focus{border-color:rgba(201,168,76,.5)!important;outline:none}
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:#0d0f14}
+::-webkit-scrollbar-thumb{background:#2a2520;border-radius:3px}
+@media(max-width:600px){table td:nth-child(1),table th:nth-child(1){display:none}}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+  var firebaseConfig = {
+    apiKey:"AIzaSyCaTE8CruzVoXbuxiWw7780IHtuKNwC17Q",
+    authDomain:"cuenta-25c64.firebaseapp.com",
+    projectId:"cuenta-25c64",
+    storageBucket:"cuenta-25c64.firebasestorage.app",
+    messagingSenderId:"728683182116",
+    appId:"1:728683182116:web:4cf969d1216c7f484f00b1"
+  };
+  firebase.initializeApp(firebaseConfig);
+  var db = firebase.firestore();
+  var ventasRef   = db.collection("ventas");
+  var gastosRef   = db.collection("gastos");
+  var semanasRef  = db.collection("semanas_guardadas");
+</script>
+<script type="text/babel">
+const {useState,useEffect} = React;
+
+const DIAS = ["Lunes","Martes","Miercoles","Jueves","Viernes"];
+const DL   = {Lunes:"Lunes",Martes:"Martes",Miercoles:"Miercoles",Jueves:"Jueves",Viernes:"Viernes"};
+// Tabs: dias + Gastos + Historial
+const TABS = ["Todos","Lunes","Martes","Miercoles","Jueves","Viernes","Gastos","Historial"];
+const TAB_LBL = {Todos:"Todos",Lunes:"Lun",Martes:"Mar",Miercoles:"Mie",Jueves:"Jue",Viernes:"Vie",Gastos:"Gastos",Historial:"Historial"};
+
+const SI = {background:"#0d0f14",border:"1px solid rgba(255,255,255,.1)",borderRadius:"3px",padding:"10px 14px",color:"#e8e0d0",fontSize:"13px",fontFamily:"Courier New,monospace",width:"100%"};
+
+function fmt(n){return (n||0).toLocaleString("es-MX",{style:"currency",currency:"MXN",minimumFractionDigits:0});}
+
+function getWeekRange(){
+  const now=new Date(), mon=new Date(now);
+  mon.setDate(now.getDate()-((now.getDay()+6)%7));
+  const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+  const f=d=>d.toLocaleDateString("es-MX",{day:"2-digit",month:"short"});
+  return f(mon)+" - "+f(sun)+", "+now.getFullYear();
+}
+function getWeekNum(){
+  const now=new Date(), s=new Date(now.getFullYear(),0,1);
+  return Math.ceil(((now-s)/86400000+s.getDay()+1)/7);
+}
+
+function App(){
+  const [ventas,   setVentas]   = useState([]);
+  const [gastos,   setGastos]   = useState([]);
+  const [semanas,  setSemanas]  = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [fbError,  setFbError]  = useState(null);
+  const [tab,      setTab]      = useState("Todos");
+  const [search,   setSearch]   = useState("");
+  const [animIn,   setAnimIn]   = useState(false);
+
+  // Venta form
+  const [form,    setForm]    = useState({cliente:"",lugar:"",total:"",cajas:"",dia:"Lunes"});
+  const [editId,  setEditId]  = useState(null);
+  const [saved,   setSaved]   = useState(false);
+
+  // Gasto form
+  const [gForm,   setGForm]   = useState({concepto:"",monto:"",tipo:"Sueldo"});
+  const [gEditId, setGEditId] = useState(null);
+  const [gSaved,  setGSaved]  = useState(false);
+
+  // UI
+  const [showResumen,  setShowResumen]  = useState(false);
+  const [showSemana,   setShowSemana]   = useState(null); // semana guardada seleccionada
+  const [guardando,    setGuardando]    = useState(false);
+  const [guardado,     setGuardado]     = useState(false);
+
+  useEffect(()=>{
+    setTimeout(()=>setAnimIn(true),80);
+    const u1 = ventasRef.orderBy("creadoEn","asc").onSnapshot(
+      s=>{setVentas(s.docs.map(d=>({id:d.id,...d.data()})));setLoading(false);},
+      e=>{setFbError(e.message);setLoading(false);}
+    );
+    const u2 = gastosRef.orderBy("creadoEn","asc").onSnapshot(
+      s=>setGastos(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}
+    );
+    const u3 = semanasRef.orderBy("guardadoEn","desc").onSnapshot(
+      s=>setSemanas(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}
+    );
+    return()=>{u1();u2();u3();};
+  },[]);
+
+  // --- Calculos ---
+  const isDia     = DIAS.includes(tab);
+  const filtered  = (isDia ? ventas.filter(v=>v.dia===tab) : ventas)
+    .filter(v=>(v.cliente||"").toLowerCase().includes(search.toLowerCase())||(v.lugar||"").toLowerCase().includes(search.toLowerCase()));
+
+  const semTotal   = ventas.reduce((s,v)=>s+(v.total||0),0);
+  const semAvg     = ventas.length?semTotal/ventas.length:0;
+  const semMax     = ventas.length?Math.max(...ventas.map(v=>v.total||0)):0;
+  const semCajas   = ventas.reduce((s,v)=>s+(v.cajas||0),0);
+  const totGastos  = gastos.reduce((s,g)=>s+(g.monto||0),0);
+  const totSueldos = gastos.filter(g=>g.tipo==="Sueldo").reduce((s,g)=>s+(g.monto||0),0);
+  const totOtros   = gastos.filter(g=>g.tipo==="Gasto").reduce((s,g)=>s+(g.monto||0),0);
+  const utilidad   = semTotal - totGastos;
+
+  const filtTotal = filtered.reduce((s,v)=>s+(v.total||0),0);
+  const filtCajas = filtered.reduce((s,v)=>s+(v.cajas||0),0);
+
+  const porDia = DIAS.map(d=>({dia:d,total:ventas.filter(v=>v.dia===d).reduce((s,v)=>s+(v.total||0),0)})).filter(d=>d.total>0);
+  const dMax   = porDia.length?Math.max(...porDia.map(d=>d.total)):1;
+  const porEst = Object.values(ventas.reduce((a,v)=>{const k=v.lugar||"?";if(!a[k])a[k]={lugar:k,total:0};a[k].total+=v.total||0;return a;},{}));
+  const eMax   = porEst.length?Math.max(...porEst.map(e=>e.total)):1;
+
+  // --- CRUD ventas ---
+  const handleSubmit = async()=>{
+    if(!form.cliente||!form.lugar||!form.total)return;
+    const d={cliente:form.cliente.trim(),lugar:form.lugar.trim(),total:parseFloat(form.total)||0,cajas:parseInt(form.cajas)||0,dia:form.dia,
+      creadoEn:editId?(ventas.find(v=>v.id===editId)||{}).creadoEn:firebase.firestore.FieldValue.serverTimestamp()};
+    editId?await ventasRef.doc(editId).update(d):await ventasRef.add(d);
+    setEditId(null);setForm({cliente:"",lugar:"",total:"",cajas:"",dia:"Lunes"});
+    setSaved(true);setTimeout(()=>setSaved(false),1800);
+  };
+  const handleEdit = v=>{setEditId(v.id);setForm({cliente:v.cliente,lugar:v.lugar,total:String(v.total),cajas:String(v.cajas||""),dia:v.dia||"Lunes"});};
+  const handleDelete = async id=>{if(window.confirm("Eliminar este registro?"))await ventasRef.doc(id).delete();};
+
+  // --- CRUD gastos ---
+  const handleGasto = async()=>{
+    if(!gForm.concepto||!gForm.monto)return;
+    const d={concepto:gForm.concepto.trim(),monto:parseFloat(gForm.monto)||0,tipo:gForm.tipo,
+      creadoEn:gEditId?(gastos.find(g=>g.id===gEditId)||{}).creadoEn:firebase.firestore.FieldValue.serverTimestamp()};
+    gEditId?await gastosRef.doc(gEditId).update(d):await gastosRef.add(d);
+    setGEditId(null);setGForm({concepto:"",monto:"",tipo:"Sueldo"});
+    setGSaved(true);setTimeout(()=>setGSaved(false),1800);
+  };
+  const handleGastoEdit = g=>{setGEditId(g.id);setGForm({concepto:g.concepto,monto:String(g.monto),tipo:g.tipo||"Sueldo"});};
+  const handleGastoDelete = async id=>{if(window.confirm("Eliminar gasto?"))await gastosRef.doc(id).delete();};
+
+  // --- Guardar / Borrar semana ---
+  const handleGuardar = async()=>{
+    setGuardando(true);
+    await semanasRef.add({
+      semana:getWeekNum(),rango:getWeekRange(),ano:new Date().getFullYear(),
+      totalVentas:semTotal,totalGastos:totGastos,totalSueldos:totSueldos,totalOtros:totOtros,
+      utilidadNeta:utilidad,totalCajas:semCajas,numClientes:ventas.length,
+      ventas:ventas.map(v=>({cliente:v.cliente,lugar:v.lugar,total:v.total,cajas:v.cajas,dia:v.dia})),
+      gastos:gastos.map(g=>({concepto:g.concepto,monto:g.monto,tipo:g.tipo})),
+      guardadoEn:firebase.firestore.FieldValue.serverTimestamp()
+    });
+    setGuardando(false);setGuardado(true);setTimeout(()=>setGuardado(false),2500);
+  };
+  const handleDeleteSemana = async(id)=>{
+    if(!window.confirm("Borrar esta semana guardada?"))return;
+    await semanasRef.doc(id).delete();
+  };
+
+  const handleClearWeek = async()=>{
+    if(!window.confirm("Borrar TODOS los registros de la semana?"))return;
+    const s=await ventasRef.get(), b=db.batch();
+    s.docs.forEach(d=>b.delete(d.ref));await b.commit();
+  };
+
+  // --- Loading / Error ---
+  if(loading)return(
+    <div style={{minHeight:"100vh",background:"#0d0f14",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"16px"}}>
+      <div style={{width:"32px",height:"32px",border:"3px solid rgba(201,168,76,.2)",borderTop:"3px solid #c9a84c",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
+      <div style={{fontSize:"11px",letterSpacing:"4px",color:"#6a6358"}}>CONECTANDO...</div>
+    </div>
+  );
+  if(fbError)return(
+    <div style={{minHeight:"100vh",background:"#0d0f14",display:"flex",alignItems:"center",justifyContent:"center",padding:"24px"}}>
+      <div style={{color:"#d4775a",fontSize:"12px",textAlign:"center",fontFamily:"monospace"}}>{fbError}</div>
+    </div>
+  );
+
+  // ===================== RENDER =====================
+  return(
+  <div style={{minHeight:"100vh",background:"#0d0f14",fontFamily:"Courier New,monospace",color:"#e8e0d0"}}>
+
+    {/* ── HEADER ── */}
+    <div style={{background:"linear-gradient(135deg,#1a1f2e,#0d1117)",borderBottom:"2px solid #c9a84c",padding:"24px 24px 0",position:"relative",overflow:"hidden"}}>
+      <div style={{position:"absolute",inset:0,backgroundImage:"repeating-linear-gradient(0deg,transparent,transparent 39px,rgba(201,168,76,.05) 39px,rgba(201,168,76,.05) 40px),repeating-linear-gradient(90deg,transparent,transparent 39px,rgba(201,168,76,.05) 39px,rgba(201,168,76,.05) 40px)",pointerEvents:"none"}}/>
+      <div style={{position:"relative",zIndex:1}}>
+        <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"4px"}}>
+          <span style={{fontSize:"10px",letterSpacing:"5px",color:"#c9a84c",textTransform:"uppercase"}}>Reporte Semanal</span>
+          <span style={{width:"7px",height:"7px",borderRadius:"50%",background:"#7eb8a0",boxShadow:"0 0 5px #7eb8a0",display:"inline-block"}}/>
+        </div>
+        <h1 style={{fontSize:"clamp(24px,5vw,46px)",fontWeight:"bold",color:"#f5ead0",letterSpacing:"-1px",lineHeight:1}}>VENTAS</h1>
+        <div style={{display:"flex",alignItems:"center",gap:"10px",marginTop:"8px",flexWrap:"wrap"}}>
+          <span style={{fontSize:"11px",color:"#8a7d65"}}>{getWeekRange()}</span>
+          <button onClick={handleGuardar} disabled={guardando} style={{background:"rgba(126,184,160,.12)",color:"#7eb8a0",border:"1px solid rgba(126,184,160,.35)",padding:"4px 12px",borderRadius:"2px",fontFamily:"inherit",fontSize:"9px",letterSpacing:"3px",textTransform:"uppercase",cursor:"pointer"}}>
+            {guardando?"GUARDANDO...":guardado?"GUARDADO ✓":"GUARDAR SEMANA"}
+          </button>
+          <button onClick={handleClearWeek} style={{background:"rgba(212,119,90,.12)",color:"#d4775a",border:"1px solid rgba(212,119,90,.35)",padding:"4px 12px",borderRadius:"2px",fontFamily:"inherit",fontSize:"9px",letterSpacing:"3px",textTransform:"uppercase",cursor:"pointer"}}>
+            BORRAR SEMANA
+          </button>
+        </div>
+      </div>
+
+      {/* TABS */}
+      <div style={{display:"flex",gap:"4px",marginTop:"16px",flexWrap:"wrap"}}>
+        {TABS.map(t=>{
+          const activo=tab===t;
+          const isGasto=t==="Gastos", isHist=t==="Historial";
+          const bg  = activo?(isGasto?"#d4775a":isHist?"#8fa8d4":"#c9a84c"):"rgba(255,255,255,.04)";
+          const col = activo?"#0d0f14":(isGasto?"#d4775a":isHist?"#8fa8d4":"#6a6358");
+          const brd = activo?"none":`1px solid ${isGasto?"rgba(212,119,90,.25)":isHist?"rgba(143,168,212,.25)":"rgba(255,255,255,.07)"}`;
+          return(
+            <button key={t} onClick={()=>setTab(t)} style={{padding:"5px 13px",borderRadius:"2px",fontSize:"10px",letterSpacing:"2px",background:bg,color:col,border:brd,cursor:"pointer",fontFamily:"inherit",fontWeight:activo?"bold":"normal",marginBottom:"0"}}>
+              {TAB_LBL[t]}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{height:"2px"}}/>
+    </div>
+
+    <div style={{maxWidth:"1100px",margin:"0 auto",padding:"24px 18px"}}>
+
+      {/* ── KPI CARDS ── */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:"12px",marginBottom:"26px",opacity:animIn?1:0,transform:animIn?"none":"translateY(14px)",transition:"all .6s ease"}}>
+        {[
+          {label:"Total Semana",  value:fmt(semTotal), accent:"#c9a84c"},
+          {label:"Promedio",      value:fmt(semAvg),   accent:"#7eb8a0"},
+          {label:"Venta Alta",    value:fmt(semMax),   accent:"#d4775a"},
+          {label:"Clientes",      value:ventas.length, accent:"#8fa8d4"},
+          {label:"Total Cajas",   value:semCajas+" cjs",accent:"#b07fd4"},
+          {label:"Total Gastos",  value:fmt(totGastos),accent:"#d4775a"},
+          {label:"Utilidad Neta", value:fmt(utilidad), accent:utilidad>=0?"#7eb8a0":"#d4775a"},
+        ].map(k=>(
+          <div key={k.label} style={{background:"#141720",border:"1px solid rgba(255,255,255,.06)",borderTop:"3px solid "+k.accent,borderRadius:"4px",padding:"16px 18px"}}>
+            <div style={{fontSize:"8px",letterSpacing:"3px",color:"#6a6358",textTransform:"uppercase",marginBottom:"7px"}}>{k.label}</div>
+            <div style={{fontSize:"19px",fontWeight:"bold",color:k.accent}}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ══════════════════════════════════════
+          TAB: VENTAS (Todos / dias)
+      ══════════════════════════════════════ */}
+      {(tab==="Todos"||isDia)&&(<>
+
+        {/* Graficas */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"14px",marginBottom:"22px"}}>
+          <div style={{background:"#141720",border:"1px solid rgba(255,255,255,.06)",borderRadius:"4px",padding:"18px"}}>
+            <div style={{fontSize:"8px",letterSpacing:"4px",color:"#6a6358",textTransform:"uppercase",marginBottom:"14px"}}>QUE DIA SE VENDIO MAS</div>
+            {porDia.length===0?<div style={{color:"#4a4540",fontSize:"11px"}}>Sin datos</div>
+              :porDia.map(d=>(
+                <div key={d.dia} style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"8px"}}>
+                  <div style={{width:"60px",fontSize:"10px",color:"#a09080",textAlign:"right",flexShrink:0}}>{DL[d.dia]}</div>
+                  <div style={{flex:1,height:"16px",background:"rgba(255,255,255,.04)",borderRadius:"2px",overflow:"hidden"}}>
+                    <div style={{height:"100%",width:((d.total/dMax)*100)+"%",background:"linear-gradient(90deg,#c9a84c,#e8c96a)",borderRadius:"2px",transition:"width 1s ease"}}/>
+                  </div>
+                  <div style={{width:"70px",fontSize:"10px",color:"#c9a84c",textAlign:"right",flexShrink:0}}>{fmt(d.total)}</div>
+                </div>
+              ))
+            }
+          </div>
+          <div style={{background:"#141720",border:"1px solid rgba(255,255,255,.06)",borderRadius:"4px",padding:"18px"}}>
+            <div style={{fontSize:"8px",letterSpacing:"4px",color:"#6a6358",textTransform:"uppercase",marginBottom:"14px"}}>QUE ESTADO VENDIO MAS</div>
+            {porEst.length===0?<div style={{color:"#4a4540",fontSize:"11px"}}>Sin datos</div>
+              :porEst.map(e=>(
+                <div key={e.lugar} style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"8px"}}>
+                  <div style={{width:"80px",fontSize:"10px",color:"#a09080",textAlign:"right",flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.lugar}</div>
+                  <div style={{flex:1,height:"16px",background:"rgba(255,255,255,.04)",borderRadius:"2px",overflow:"hidden"}}>
+                    <div style={{height:"100%",width:((e.total/eMax)*100)+"%",background:"linear-gradient(90deg,#8fa8d4,#b0c8f0)",borderRadius:"2px",transition:"width 1s ease"}}/>
+                  </div>
+                  <div style={{width:"70px",fontSize:"10px",color:"#8fa8d4",textAlign:"right",flexShrink:0}}>{fmt(e.total)}</div>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+
+        {/* Formulario venta */}
+        <div style={{background:"#141720",border:"1px solid rgba(201,168,76,.22)",borderRadius:"4px",padding:"20px",marginBottom:"20px"}}>
+          <div style={{fontSize:"9px",letterSpacing:"4px",color:"#c9a84c",textTransform:"uppercase",marginBottom:"14px"}}>{editId?"EDITAR VENTA":"+ NUEVA VENTA"}</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"10px",marginBottom:"12px"}}>
+            <input placeholder="Nombre del cliente" value={form.cliente} onChange={e=>setForm(f=>({...f,cliente:e.target.value}))} style={SI}/>
+            <input placeholder="Lugar del cliente"  value={form.lugar}   onChange={e=>setForm(f=>({...f,lugar:e.target.value}))}   style={SI}/>
+            <input placeholder="Total ($)" type="number" value={form.total} onChange={e=>setForm(f=>({...f,total:e.target.value}))} style={SI}/>
+            <input placeholder="Cajas" type="number" value={form.cajas} onChange={e=>setForm(f=>({...f,cajas:e.target.value}))} style={SI}/>
+            <select value={form.dia} onChange={e=>setForm(f=>({...f,dia:e.target.value}))} style={{...SI,cursor:"pointer",appearance:"none"}}>
+              {DIAS.map(d=><option key={d} value={d}>{DL[d]}</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",gap:"10px",flexWrap:"wrap",alignItems:"center"}}>
+            <button onClick={handleSubmit} style={{background:"#c9a84c",color:"#0d0f14",border:"none",padding:"9px 20px",borderRadius:"3px",fontFamily:"inherit",fontSize:"10px",letterSpacing:"2px",textTransform:"uppercase",cursor:"pointer",fontWeight:"bold"}}>{editId?"GUARDAR":"AGREGAR"}</button>
+            {editId&&<button onClick={()=>{setEditId(null);setForm({cliente:"",lugar:"",total:"",cajas:"",dia:"Lunes"});}} style={{background:"transparent",color:"#6a6358",border:"1px solid rgba(255,255,255,.1)",padding:"9px 14px",borderRadius:"3px",fontFamily:"inherit",fontSize:"10px",cursor:"pointer"}}>CANCELAR</button>}
+            {saved&&<span style={{fontSize:"10px",color:"#7eb8a0",letterSpacing:"2px"}}>GUARDADO</span>}
+          </div>
+        </div>
+
+        {/* Buscador */}
+        <div style={{display:"flex",gap:"10px",alignItems:"center",flexWrap:"wrap",marginBottom:"12px"}}>
+          <input placeholder="Buscar cliente o lugar..." value={search} onChange={e=>setSearch(e.target.value)} style={{...SI,maxWidth:"280px"}}/>
+          {isDia&&<span style={{fontSize:"9px",letterSpacing:"2px",color:"#c9a84c",padding:"4px 10px",border:"1px solid rgba(201,168,76,.25)",borderRadius:"2px"}}>{DL[tab]} — {filtered.length} reg.</span>}
+        </div>
+
+        {/* Tabla */}
+        <div style={{background:"#141720",border:"1px solid rgba(255,255,255,.06)",borderRadius:"4px",overflow:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",minWidth:"500px"}}>
+            <thead>
+              <tr style={{borderBottom:"2px solid rgba(201,168,76,.28)"}}>
+                {["#","Dia","Cliente","Lugar","Cajas","Total",""].map((h,i)=>(
+                  <th key={i} style={{padding:"12px 14px",textAlign:(h==="Total"||h==="Cajas")?"right":"left",fontSize:"8px",letterSpacing:"3px",textTransform:"uppercase",color:"#6a6358",fontWeight:"normal"}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((v,i)=>(
+                <tr key={v.id}
+                  style={{borderBottom:"1px solid rgba(255,255,255,.04)",background:i%2===0?"transparent":"rgba(255,255,255,.014)",transition:"background .2s"}}
+                  onMouseEnter={e=>e.currentTarget.style.background="rgba(201,168,76,.055)"}
+                  onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,.014)"}
+                >
+                  <td style={{padding:"12px 14px",fontSize:"10px",color:"#4a4540",width:"34px"}}>{String(i+1).padStart(2,"0")}</td>
+                  <td style={{padding:"12px 14px",fontSize:"9px",whiteSpace:"nowrap"}}><span style={{background:"rgba(201,168,76,.11)",color:"#c9a84c",padding:"3px 6px",borderRadius:"2px"}}>{DL[v.dia]||v.dia||"—"}</span></td>
+                  <td style={{padding:"12px 14px",fontSize:"13px",color:"#e8e0d0"}}>{v.cliente}</td>
+                  <td style={{padding:"12px 14px",fontSize:"11px",color:"#8a7d65"}}>📍 {v.lugar}</td>
+                  <td style={{padding:"12px 14px",fontSize:"11px",color:"#8fa8d4",textAlign:"right"}}>{v.cajas||0} 📦</td>
+                  <td style={{padding:"12px 14px",fontSize:"13px",color:"#c9a84c",textAlign:"right",fontWeight:"bold"}}>{fmt(v.total)}</td>
+                  <td style={{padding:"12px 14px",textAlign:"right",whiteSpace:"nowrap"}}>
+                    <button onClick={()=>handleEdit(v)} style={{background:"none",border:"none",color:"#7eb8a0",cursor:"pointer",fontSize:"14px",marginRight:"6px"}}>✎</button>
+                    <button onClick={()=>handleDelete(v.id)} style={{background:"none",border:"none",color:"#d4775a",cursor:"pointer",fontSize:"14px"}}>✕</button>
+                  </td>
+                </tr>
+              ))}
+              {filtered.length===0&&<tr><td colSpan={7} style={{padding:"36px",textAlign:"center",color:"#4a4540",fontSize:"11px",letterSpacing:"2px"}}>SIN REGISTROS</td></tr>}
+            </tbody>
+            <tfoot>
+              <tr style={{borderTop:"2px solid rgba(201,168,76,.28)"}}>
+                <td colSpan={4} style={{padding:"12px 14px",fontSize:"8px",letterSpacing:"3px",color:"#6a6358",textTransform:"uppercase"}}>{isDia?"Total "+DL[tab]:"Total Semana"}</td>
+                <td style={{padding:"12px 14px",textAlign:"right",fontSize:"11px",color:"#8fa8d4"}}>{filtCajas} 📦</td>
+                <td style={{padding:"12px 14px",textAlign:"right",fontSize:"14px",color:"#c9a84c",fontWeight:"bold"}}>{fmt(filtTotal)}</td>
+                <td/>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        {/* Boton resumen */}
+        <div style={{marginTop:"24px",textAlign:"center"}}>
+          <button onClick={()=>setShowResumen(true)} style={{background:"rgba(201,168,76,.1)",color:"#c9a84c",border:"1px solid rgba(201,168,76,.35)",padding:"13px 36px",borderRadius:"3px",fontFamily:"inherit",fontSize:"9px",letterSpacing:"4px",textTransform:"uppercase",cursor:"pointer",width:"100%",maxWidth:"340px"}}>
+            VER RESUMEN FINAL DE LA SEMANA
+          </button>
+        </div>
+
+      </>)}
+
+      {/* ══════════════════════════════════════
+          TAB: GASTOS
+      ══════════════════════════════════════ */}
+      {tab==="Gastos"&&(<>
+
+        {/* Mini KPIs gastos */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"12px",marginBottom:"22px"}}>
+          {[
+            {label:"Sueldos",    value:fmt(totSueldos), accent:"#d4775a"},
+            {label:"Otros",      value:fmt(totOtros),   accent:"#e8956a"},
+            {label:"Total Gastos",value:fmt(totGastos), accent:"#d4775a"},
+            {label:"Utilidad",   value:fmt(utilidad),   accent:utilidad>=0?"#7eb8a0":"#d4775a"},
+          ].map(k=>(
+            <div key={k.label} style={{background:"#141720",border:"1px solid rgba(255,255,255,.06)",borderTop:"3px solid "+k.accent,borderRadius:"4px",padding:"16px 18px"}}>
+              <div style={{fontSize:"8px",letterSpacing:"3px",color:"#6a6358",textTransform:"uppercase",marginBottom:"7px"}}>{k.label}</div>
+              <div style={{fontSize:"19px",fontWeight:"bold",color:k.accent}}>{k.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Barra Ventas vs Gastos */}
+        <div style={{background:"#141720",border:"1px solid rgba(255,255,255,.06)",borderRadius:"4px",padding:"18px",marginBottom:"20px"}}>
+          <div style={{fontSize:"8px",letterSpacing:"4px",color:"#6a6358",textTransform:"uppercase",marginBottom:"14px"}}>VENTAS VS GASTOS</div>
+          {[
+            {label:"Ventas",  val:semTotal, color:"#c9a84c", max:semTotal},
+            {label:"Gastos",  val:totGastos,color:"#d4775a", max:semTotal},
+          ].map(r=>(
+            <div key={r.label} style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"10px"}}>
+              <div style={{width:"60px",fontSize:"10px",color:r.color,textAlign:"right",flexShrink:0}}>{r.label}</div>
+              <div style={{flex:1,height:"18px",background:"rgba(255,255,255,.04)",borderRadius:"2px",overflow:"hidden"}}>
+                <div style={{height:"100%",width:(r.max>0?Math.min((r.val/r.max)*100,100):0)+"%",background:r.color,borderRadius:"2px",transition:"width 1s ease"}}/>
+              </div>
+              <div style={{width:"80px",fontSize:"10px",color:r.color,textAlign:"right",flexShrink:0}}>{fmt(r.val)}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Formulario gasto */}
+        <div style={{background:"#141720",border:"1px solid rgba(212,119,90,.22)",borderRadius:"4px",padding:"20px",marginBottom:"20px"}}>
+          <div style={{fontSize:"9px",letterSpacing:"4px",color:"#d4775a",textTransform:"uppercase",marginBottom:"14px"}}>{gEditId?"EDITAR GASTO":"+ NUEVO GASTO"}</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"10px",marginBottom:"12px"}}>
+            <input placeholder="Concepto (ej: Sueldo Juan)" value={gForm.concepto} onChange={e=>setGForm(f=>({...f,concepto:e.target.value}))} style={SI}/>
+            <input placeholder="Monto ($)" type="number" value={gForm.monto} onChange={e=>setGForm(f=>({...f,monto:e.target.value}))} style={SI}/>
+            <select value={gForm.tipo} onChange={e=>setGForm(f=>({...f,tipo:e.target.value}))} style={{...SI,cursor:"pointer",appearance:"none"}}>
+              <option value="Sueldo">Sueldo</option>
+              <option value="Gasto">Gasto</option>
+            </select>
+          </div>
+          <div style={{display:"flex",gap:"10px",flexWrap:"wrap",alignItems:"center"}}>
+            <button onClick={handleGasto} style={{background:"#d4775a",color:"#fff",border:"none",padding:"9px 20px",borderRadius:"3px",fontFamily:"inherit",fontSize:"10px",letterSpacing:"2px",textTransform:"uppercase",cursor:"pointer",fontWeight:"bold"}}>{gEditId?"GUARDAR":"AGREGAR"}</button>
+            {gEditId&&<button onClick={()=>{setGEditId(null);setGForm({concepto:"",monto:"",tipo:"Sueldo"});}} style={{background:"transparent",color:"#6a6358",border:"1px solid rgba(255,255,255,.1)",padding:"9px 14px",borderRadius:"3px",fontFamily:"inherit",fontSize:"10px",cursor:"pointer"}}>CANCELAR</button>}
+            {gSaved&&<span style={{fontSize:"10px",color:"#7eb8a0",letterSpacing:"2px"}}>GUARDADO</span>}
+          </div>
+        </div>
+
+        {/* Tabla gastos */}
+        <div style={{background:"#141720",border:"1px solid rgba(255,255,255,.06)",borderRadius:"4px",overflow:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",minWidth:"400px"}}>
+            <thead>
+              <tr style={{borderBottom:"2px solid rgba(212,119,90,.28)"}}>
+                {["#","Concepto","Tipo","Monto",""].map((h,i)=>(
+                  <th key={i} style={{padding:"12px 14px",textAlign:h==="Monto"?"right":"left",fontSize:"8px",letterSpacing:"3px",textTransform:"uppercase",color:"#6a6358",fontWeight:"normal"}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {gastos.length===0&&<tr><td colSpan={5} style={{padding:"36px",textAlign:"center",color:"#4a4540",fontSize:"11px",letterSpacing:"2px"}}>SIN GASTOS</td></tr>}
+              {gastos.map((g,i)=>(
+                <tr key={g.id}
+                  style={{borderBottom:"1px solid rgba(255,255,255,.04)",background:i%2===0?"transparent":"rgba(255,255,255,.014)",transition:"background .2s"}}
+                  onMouseEnter={e=>e.currentTarget.style.background="rgba(212,119,90,.05)"}
+                  onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,.014)"}
+                >
+                  <td style={{padding:"12px 14px",fontSize:"10px",color:"#4a4540"}}>{String(i+1).padStart(2,"0")}</td>
+                  <td style={{padding:"12px 14px",fontSize:"13px",color:"#e8e0d0"}}>{g.concepto}</td>
+                  <td style={{padding:"12px 14px"}}>
+                    <span style={{background:g.tipo==="Sueldo"?"rgba(212,119,90,.15)":"rgba(232,149,106,.12)",color:g.tipo==="Sueldo"?"#d4775a":"#e8956a",padding:"3px 7px",borderRadius:"2px",fontSize:"8px",letterSpacing:"2px",textTransform:"uppercase"}}>{g.tipo}</span>
+                  </td>
+                  <td style={{padding:"12px 14px",fontSize:"13px",color:"#d4775a",textAlign:"right",fontWeight:"bold"}}>{fmt(g.monto)}</td>
+                  <td style={{padding:"12px 14px",textAlign:"right",whiteSpace:"nowrap"}}>
+                    <button onClick={()=>handleGastoEdit(g)} style={{background:"none",border:"none",color:"#7eb8a0",cursor:"pointer",fontSize:"14px",marginRight:"6px"}}>✎</button>
+                    <button onClick={()=>handleGastoDelete(g.id)} style={{background:"none",border:"none",color:"#d4775a",cursor:"pointer",fontSize:"14px"}}>✕</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{borderTop:"2px solid rgba(212,119,90,.28)"}}>
+                <td colSpan={3} style={{padding:"12px 14px",fontSize:"8px",letterSpacing:"3px",color:"#6a6358",textTransform:"uppercase"}}>Total Gastos</td>
+                <td style={{padding:"12px 14px",textAlign:"right",fontSize:"14px",color:"#d4775a",fontWeight:"bold"}}>{fmt(totGastos)}</td>
+                <td/>
+              </tr>
+              <tr>
+                <td colSpan={3} style={{padding:"12px 14px",fontSize:"8px",letterSpacing:"3px",color:"#6a6358",textTransform:"uppercase"}}>Utilidad Neta</td>
+                <td style={{padding:"12px 14px",textAlign:"right",fontSize:"16px",fontWeight:"bold",color:utilidad>=0?"#7eb8a0":"#d4775a"}}>{fmt(utilidad)}</td>
+                <td/>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+      </>)}
+
+      {/* ══════════════════════════════════════
+          TAB: HISTORIAL
+      ══════════════════════════════════════ */}
+      {tab==="Historial"&&(<>
+        <div style={{fontSize:"9px",letterSpacing:"4px",color:"#8fa8d4",textTransform:"uppercase",marginBottom:"18px"}}>SEMANAS GUARDADAS — {semanas.length}</div>
+        {semanas.length===0&&(
+          <div style={{background:"#141720",border:"1px solid rgba(255,255,255,.06)",borderRadius:"4px",padding:"40px",textAlign:"center",color:"#4a4540",fontSize:"11px",letterSpacing:"2px"}}>
+            AUN NO HAY SEMANAS GUARDADAS
+          </div>
+        )}
+        <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
+          {semanas.map(s=>(
+            <div key={s.id} onClick={()=>setShowSemana(showSemana===s.id?null:s.id)}
+              style={{background:"#141720",border:"1px solid rgba(143,168,212,.2)",borderRadius:"4px",cursor:"pointer",overflow:"hidden"}}>
+              {/* Cabecera */}
+              <div style={{padding:"16px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:"10px"}}>
+                <div>
+                  <div style={{fontSize:"9px",letterSpacing:"4px",color:"#8fa8d4",textTransform:"uppercase",marginBottom:"4px"}}>Semana {s.semana} · {s.ano}</div>
+                  <div style={{fontSize:"13px",color:"#e8e0d0"}}>{s.rango}</div>
+                </div>
+                <div style={{display:"flex",gap:"20px",alignItems:"center"}}>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:"8px",letterSpacing:"2px",color:"#6a6358",textTransform:"uppercase"}}>Ventas</div>
+                    <div style={{fontSize:"16px",color:"#c9a84c",fontWeight:"bold"}}>{fmt(s.totalVentas)}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:"8px",letterSpacing:"2px",color:"#6a6358",textTransform:"uppercase"}}>Gastos</div>
+                    <div style={{fontSize:"16px",color:"#d4775a",fontWeight:"bold"}}>{fmt(s.totalGastos)}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:"8px",letterSpacing:"2px",color:"#6a6358",textTransform:"uppercase"}}>Utilidad</div>
+                    <div style={{fontSize:"16px",color:s.utilidadNeta>=0?"#7eb8a0":"#d4775a",fontWeight:"bold"}}>{fmt(s.utilidadNeta)}</div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                  <button onClick={e=>{e.stopPropagation();if(window.confirm("Eliminar esta semana guardada?"))semanasRef.doc(s.id).delete();}} style={{background:"rgba(212,119,90,.12)",color:"#d4775a",border:"1px solid rgba(212,119,90,.3)",padding:"4px 10px",borderRadius:"2px",fontFamily:"inherit",fontSize:"8px",letterSpacing:"2px",textTransform:"uppercase",cursor:"pointer"}}>BORRAR</button>
+                  <span style={{color:"#6a6358",fontSize:"16px"}}>{showSemana===s.id?"▲":"▼"}</span>
+                </div>
+                </div>
+              </div>
+
+              {/* Detalle expandido */}
+              {showSemana===s.id&&(
+                <div style={{borderTop:"1px solid rgba(255,255,255,.06)",padding:"16px 18px"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px"}}>
+                    {/* Ventas */}
+                    <div>
+                      <div style={{fontSize:"8px",letterSpacing:"3px",color:"#c9a84c",textTransform:"uppercase",marginBottom:"10px",paddingBottom:"6px",borderBottom:"1px solid rgba(201,168,76,.15)"}}>VENTAS ({(s.ventas||[]).length})</div>
+                      {(s.ventas||[]).map((v,i)=>(
+                        <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:"1px solid rgba(255,255,255,.04)"}}>
+                          <span style={{fontSize:"11px",color:"#e8e0d0"}}>{v.cliente} <span style={{color:"#6a6358"}}>· {v.lugar}</span></span>
+                          <span style={{fontSize:"11px",color:"#c9a84c"}}>{fmt(v.total)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Gastos */}
+                    <div>
+                      <div style={{fontSize:"8px",letterSpacing:"3px",color:"#d4775a",textTransform:"uppercase",marginBottom:"10px",paddingBottom:"6px",borderBottom:"1px solid rgba(212,119,90,.15)"}}>GASTOS ({(s.gastos||[]).length})</div>
+                      {(s.gastos||[]).length===0&&<div style={{fontSize:"10px",color:"#4a4540"}}>Sin gastos</div>}
+                      {(s.gastos||[]).map((g,i)=>(
+                        <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:"1px solid rgba(255,255,255,.04)"}}>
+                          <span style={{fontSize:"11px",color:"#e8e0d0"}}>{g.concepto} <span style={{fontSize:"8px",color:"#d4775a",textTransform:"uppercase"}}>{g.tipo}</span></span>
+                          <span style={{fontSize:"11px",color:"#d4775a"}}>{fmt(g.monto)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Resultado */}
+                  <div style={{marginTop:"14px",padding:"12px",background:s.utilidadNeta>=0?"rgba(126,184,160,.07)":"rgba(212,119,90,.07)",borderRadius:"3px",border:"1px solid "+(s.utilidadNeta>=0?"rgba(126,184,160,.2)":"rgba(212,119,90,.2)"),display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span style={{fontSize:"9px",letterSpacing:"3px",color:"#6a6358",textTransform:"uppercase"}}>Utilidad Neta</span>
+                    <span style={{fontSize:"20px",fontWeight:"bold",color:s.utilidadNeta>=0?"#7eb8a0":"#d4775a"}}>{fmt(s.utilidadNeta)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </>)}
+
+      <div style={{marginTop:"20px",fontSize:"8px",letterSpacing:"2px",color:"#2a2520",textAlign:"center"}}>SEMANA {getWeekNum()} &middot; {new Date().getFullYear()}</div>
+    </div>
+
+    {/* ══ MODAL RESUMEN FINAL ══ */}
+    {showResumen&&(
+      <div onClick={()=>setShowResumen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px",backdropFilter:"blur(4px)"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"#141720",border:"1px solid rgba(201,168,76,.25)",borderRadius:"6px",width:"100%",maxWidth:"460px",maxHeight:"90vh",overflowY:"auto"}}>
+          <div style={{background:"linear-gradient(135deg,#1a1f2e,#0d1117)",borderBottom:"1px solid rgba(201,168,76,.2)",padding:"18px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontSize:"8px",letterSpacing:"5px",color:"#c9a84c",textTransform:"uppercase",marginBottom:"3px"}}>Resumen Final</div>
+              <div style={{fontSize:"13px",color:"#f5ead0",fontWeight:"bold"}}>SEMANA {getWeekNum()} · {new Date().getFullYear()}</div>
+              <div style={{fontSize:"10px",color:"#6a6358",marginTop:"2px"}}>{getWeekRange()}</div>
+            </div>
+            <button onClick={()=>setShowResumen(false)} style={{background:"none",border:"none",color:"#6a6358",cursor:"pointer",fontSize:"18px"}}>✕</button>
+          </div>
+          <div style={{padding:"20px"}}>
+            {/* Ventas */}
+            <div style={{marginBottom:"16px"}}>
+              <div style={{fontSize:"8px",letterSpacing:"4px",color:"#c9a84c",textTransform:"uppercase",marginBottom:"10px",paddingBottom:"6px",borderBottom:"1px solid rgba(201,168,76,.15)"}}>VENTAS</div>
+              {Object.values(ventas.reduce((a,v)=>{const k=v.lugar||"?";if(!a[k])a[k]={lugar:k,total:0,cajas:0,n:0};a[k].total+=v.total||0;a[k].cajas+=v.cajas||0;a[k].n++;return a;},{})).map((e,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"7px 10px",background:"rgba(201,168,76,.04)",borderRadius:"3px",marginBottom:"4px"}}>
+                  <span style={{fontSize:"11px",color:"#e8e0d0"}}>📍 {e.lugar}</span>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:"13px",color:"#c9a84c",fontWeight:"bold"}}>{fmt(e.total)}</div>
+                    <div style={{fontSize:"8px",color:"#6a6358"}}>{e.cajas} cajas · {e.n} cliente{e.n!==1?"s":""}</div>
+                  </div>
+                </div>
+              ))}
+              <div style={{display:"flex",justifyContent:"space-between",padding:"8px 10px",marginTop:"4px"}}>
+                <span style={{fontSize:"9px",letterSpacing:"2px",color:"#c9a84c",textTransform:"uppercase",fontWeight:"bold"}}>Total Ventas</span>
+                <span style={{fontSize:"16px",color:"#c9a84c",fontWeight:"bold"}}>{fmt(semTotal)}</span>
+              </div>
+            </div>
+            {/* Gastos */}
+            <div style={{marginBottom:"16px"}}>
+              <div style={{fontSize:"8px",letterSpacing:"4px",color:"#d4775a",textTransform:"uppercase",marginBottom:"10px",paddingBottom:"6px",borderBottom:"1px solid rgba(212,119,90,.15)"}}>GASTOS</div>
+              {gastos.length===0&&<div style={{fontSize:"10px",color:"#4a4540",padding:"10px 0"}}>Sin gastos registrados</div>}
+              {gastos.map((g,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"7px 10px",background:"rgba(212,119,90,.04)",borderRadius:"3px",marginBottom:"4px"}}>
+                  <span style={{fontSize:"11px",color:"#e8e0d0"}}>{g.concepto} <span style={{fontSize:"8px",color:"#d4775a",textTransform:"uppercase"}}>{g.tipo}</span></span>
+                  <span style={{fontSize:"13px",color:"#d4775a",fontWeight:"bold"}}>{fmt(g.monto)}</span>
+                </div>
+              ))}
+              <div style={{display:"flex",justifyContent:"space-between",padding:"8px 10px",marginTop:"4px"}}>
+                <span style={{fontSize:"9px",letterSpacing:"2px",color:"#d4775a",textTransform:"uppercase",fontWeight:"bold"}}>Total Gastos</span>
+                <span style={{fontSize:"16px",color:"#d4775a",fontWeight:"bold"}}>{fmt(totGastos)}</span>
+              </div>
+            </div>
+            {/* Resultado */}
+            <div style={{background:utilidad>=0?"rgba(126,184,160,.08)":"rgba(212,119,90,.08)",border:"1px solid "+(utilidad>=0?"rgba(126,184,160,.3)":"rgba(212,119,90,.3)"),borderRadius:"4px",padding:"18px"}}>
+              <div style={{fontSize:"8px",letterSpacing:"4px",color:utilidad>=0?"#7eb8a0":"#d4775a",textTransform:"uppercase",marginBottom:"14px",textAlign:"center"}}>RESULTADO FINAL</div>
+              <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+                <div style={{display:"flex",justifyContent:"space-between"}}>
+                  <span style={{fontSize:"11px",color:"#8a7d65"}}>Total Ventas</span>
+                  <span style={{fontSize:"13px",color:"#c9a84c",fontWeight:"bold"}}>{fmt(semTotal)}</span>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between"}}>
+                  <span style={{fontSize:"11px",color:"#8a7d65"}}>Total Gastos</span>
+                  <span style={{fontSize:"13px",color:"#d4775a",fontWeight:"bold"}}>- {fmt(totGastos)}</span>
+                </div>
+                <div style={{height:"1px",background:utilidad>=0?"rgba(126,184,160,.3)":"rgba(212,119,90,.3)",margin:"4px 0"}}/>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+                  <span style={{fontSize:"11px",letterSpacing:"2px",textTransform:"uppercase",color:utilidad>=0?"#7eb8a0":"#d4775a"}}>Utilidad Neta</span>
+                  <span style={{fontSize:"24px",fontWeight:"bold",color:utilidad>=0?"#7eb8a0":"#d4775a"}}>{fmt(utilidad)}</span>
+                </div>
+              </div>
+            </div>
+            <button onClick={()=>setShowResumen(false)} style={{width:"100%",marginTop:"16px",background:"transparent",border:"1px solid rgba(255,255,255,.1)",color:"#6a6358",padding:"11px",fontFamily:"inherit",fontSize:"9px",letterSpacing:"3px",textTransform:"uppercase",cursor:"pointer",borderRadius:"3px"}}>CERRAR</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+  </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
