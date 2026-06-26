@@ -554,6 +554,10 @@ function App(){
                     <div style={{fontSize:"16px",color:"#d4775a",fontWeight:"bold"}}>{fmt(s.totalGastos)}</div>
                   </div>
                   <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:"8px",letterSpacing:"2px",color:"#6a6358",textTransform:"uppercase"}}>Cajas</div>
+                    <div style={{fontSize:"16px",color:"#b07fd4",fontWeight:"bold"}}>{s.totalCajas||0} 📦</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
                     <div style={{fontSize:"8px",letterSpacing:"2px",color:"#6a6358",textTransform:"uppercase"}}>Utilidad</div>
                     <div style={{fontSize:"16px",color:s.utilidadNeta>=0?"#7eb8a0":"#d4775a",fontWeight:"bold"}}>{fmt(s.utilidadNeta)}</div>
                   </div>
