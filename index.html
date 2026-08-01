@@ -9,6 +9,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d0f14}
@@ -36,21 +38,202 @@ input:focus,select:focus{border-color:rgba(201,168,76,.5)!important;outline:none
   var db = firebase.firestore();
   var ventasRef   = db.collection("ventas");
   var gastosRef   = db.collection("gastos");
-  var semanasRef   = db.collection("semanas_guardadas");
-  var clientesRef  = db.collection("clientes");
+  var semanasRef  = db.collection("semanas_guardadas");
 </script>
 <script type="text/babel">
 const {useState,useEffect} = React;
 
-const DIAS = ["Lunes","Martes","Miercoles","Jueves","Viernes"];
-const DL   = {Lunes:"Lunes",Martes:"Martes",Miercoles:"Miercoles",Jueves:"Jueves",Viernes:"Viernes"};
+const DIAS = ["Lunes","Martes","Miercoles","Jueves","Viernes","Semanas"];
+const DL   = {Lunes:"Lunes",Martes:"Martes",Miercoles:"Miercoles",Jueves:"Jueves",Viernes:"Viernes",Semanas:"Semanas"};
 // Tabs: dias + Gastos + Historial
-const TABS = ["Todos","Lunes","Martes","Miercoles","Jueves","Viernes","Gastos","Historial"];
-const TAB_LBL = {Todos:"Todos",Lunes:"Lun",Martes:"Mar",Miercoles:"Mie",Jueves:"Jue",Viernes:"Vie",Gastos:"Gastos",Historial:"Historial"};
+const TABS = ["Todos","Lunes","Martes","Miercoles","Jueves","Viernes","Semanas","Gastos","Historial"];
+const TAB_LBL = {Todos:"Todos",Lunes:"Lun",Martes:"Mar",Miercoles:"Mie",Jueves:"Jue",Viernes:"Vie",Semanas:"Semanas",Gastos:"Gastos",Historial:"Historial"};
 
 const SI = {background:"#0d0f14",border:"1px solid rgba(255,255,255,.1)",borderRadius:"3px",padding:"10px 14px",color:"#e8e0d0",fontSize:"13px",fontFamily:"Courier New,monospace",width:"100%"};
 
 function fmt(n){return (n||0).toLocaleString("es-MX",{style:"currency",currency:"MXN",minimumFractionDigits:0});}
+
+function descargarPDF({ventas,gastos,semTotal,semAvg,semMax,semCajas,totGastos,totSueldos,totOtros,utilidad,porDia,porEst,modo}){
+  const soloSemanas = modo==="semanas";
+  // Si es modo Semanas, filtrar todo a solo ventas con dia="Semanas"
+  if(soloSemanas){
+    ventas = ventas.filter(v=>v.dia==="Semanas");
+    gastos = [];
+    semTotal = ventas.reduce((s,v)=>s+(v.total||0),0);
+    semAvg   = ventas.length?semTotal/ventas.length:0;
+    semMax   = ventas.length?Math.max(...ventas.map(v=>v.total||0)):0;
+    semCajas = ventas.reduce((s,v)=>s+(v.cajas||0),0);
+    totGastos=0; totSueldos=0; totOtros=0;
+    utilidad = semTotal;
+    porDia   = [{dia:"Semanas",total:semTotal}].filter(d=>d.total>0);
+    porEst   = [];
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit:"pt",format:"a4"});
+  const W = doc.internal.pageSize.getWidth();
+  const M = 40;
+  let y = 50;
+
+  // Encabezado
+  doc.setFillColor(13,15,20); doc.rect(0,0,W,80,"F");
+  doc.setFillColor(201,168,76); doc.rect(0,78,W,2,"F");
+  doc.setTextColor(201,168,76); doc.setFontSize(9);
+  doc.text(soloSemanas?"REPORTE - SECCION SEMANAS":"REPORTE SEMANAL DE VENTAS", M, 32);
+  doc.setTextColor(245,234,208); doc.setFontSize(22);
+  doc.text(soloSemanas?"SEMANAS":"VENTAS", M, 58);
+  doc.setTextColor(138,125,101); doc.setFontSize(10);
+  doc.text("Semana "+getWeekNum()+" - "+getWeekRange(), M, 72);
+
+  y = 110;
+  doc.setTextColor(20,20,20);
+
+  // KPIs
+  doc.setFontSize(11); doc.setFont(undefined,"bold");
+  doc.text("Resumen", M, y); y += 14;
+  doc.setFont(undefined,"normal"); doc.setFontSize(10);
+  const kpis = soloSemanas ? [
+    ["Total Semanas", fmt(semTotal)],
+    ["Promedio", fmt(semAvg)],
+    ["Venta más alta", fmt(semMax)],
+    ["Registros", String(ventas.length)],
+    ["Total cajas", String(semCajas)],
+  ] : [
+    ["Total Semana", fmt(semTotal)],
+    ["Promedio por cliente", fmt(semAvg)],
+    ["Venta más alta", fmt(semMax)],
+    ["Clientes", String(ventas.length)],
+    ["Total cajas", String(semCajas)],
+    ["Total gastos", fmt(totGastos)],
+    ["Sueldos", fmt(totSueldos)],
+    ["Otros gastos", fmt(totOtros)],
+    ["Utilidad neta", fmt(utilidad)],
+  ];
+  doc.autoTable({
+    startY: y, margin:{left:M,right:M},
+    head:[["Concepto","Valor"]],
+    body: kpis,
+    theme:"grid",
+    headStyles:{fillColor:[201,168,76],textColor:20,fontSize:9},
+    bodyStyles:{fontSize:9},
+    columnStyles:{1:{halign:"right"}}
+  });
+  y = doc.lastAutoTable.finalY + 20;
+
+  // Ventas por día
+  if(porDia.length){
+    doc.setFont(undefined,"bold"); doc.setFontSize(11);
+    doc.text("Ventas por día", M, y); y += 6;
+    doc.autoTable({
+      startY: y, margin:{left:M,right:M},
+      head:[["Día","Total"]],
+      body: porDia.map(d=>[d.dia,fmt(d.total)]),
+      theme:"striped",
+      headStyles:{fillColor:[201,168,76],textColor:20,fontSize:9},
+      bodyStyles:{fontSize:9},
+      columnStyles:{1:{halign:"right"}}
+    });
+    y = doc.lastAutoTable.finalY + 20;
+  }
+
+  // Ventas por lugar
+  if(porEst.length){
+    doc.setFont(undefined,"bold"); doc.setFontSize(11);
+    doc.text("Ventas por lugar", M, y); y += 6;
+    doc.autoTable({
+      startY: y, margin:{left:M,right:M},
+      head:[["Lugar","Total"]],
+      body: porEst.map(e=>[e.lugar,fmt(e.total)]),
+      theme:"striped",
+      headStyles:{fillColor:[143,168,212],textColor:20,fontSize:9},
+      bodyStyles:{fontSize:9},
+      columnStyles:{1:{halign:"right"}}
+    });
+    y = doc.lastAutoTable.finalY + 20;
+  }
+
+  // Detalle de ventas — dividido por día
+  if(ventas.length){
+    doc.setFont(undefined,"bold"); doc.setFontSize(11);
+    doc.text("Detalle de ventas por día", M, y); y += 10;
+    const DIAS_ORDEN = ["Lunes","Martes","Miercoles","Jueves","Viernes","Semanas"];
+    DIAS_ORDEN.forEach(dia=>{
+      const vs = ventas.filter(v=>v.dia===dia);
+      if(!vs.length) return;
+      const totC = vs.reduce((s,v)=>s+(v.cajas||0),0);
+      const totV = vs.reduce((s,v)=>s+(v.total||0),0);
+      if(y > 720){ doc.addPage(); y = 50; }
+      doc.setFont(undefined,"bold"); doc.setFontSize(10); doc.setTextColor(201,168,76);
+      doc.text(dia+" ("+vs.length+")", M, y); y += 4;
+      doc.setTextColor(20,20,20);
+      doc.autoTable({
+        startY: y, margin:{left:M,right:M},
+        head:[["Cliente","Lugar","Cajas","Total"]],
+        body: vs.map(v=>[v.cliente||"-",v.lugar||"-",String(v.cajas||0),fmt(v.total)]),
+        foot:[["TOTAL "+dia.toUpperCase(),"",String(totC)+" cjs",fmt(totV)]],
+        theme:"grid",
+        headStyles:{fillColor:[201,168,76],textColor:20,fontSize:9},
+        bodyStyles:{fontSize:8},
+        footStyles:{fillColor:[30,32,40],textColor:[201,168,76],fontSize:10,fontStyle:"bold"},
+        columnStyles:{2:{halign:"right"},3:{halign:"right"}}
+      });
+      y = doc.lastAutoTable.finalY + 14;
+    });
+    // Gran total
+    if(y > 720){ doc.addPage(); y = 50; }
+    const gTotC = ventas.reduce((s,v)=>s+(v.cajas||0),0);
+    const gTotV = ventas.reduce((s,v)=>s+(v.total||0),0);
+    doc.autoTable({
+      startY: y, margin:{left:M,right:M},
+      body:[["GRAN TOTAL SEMANA",String(gTotC)+" cjs",fmt(gTotV)]],
+      theme:"grid",
+      bodyStyles:{fillColor:[201,168,76],textColor:20,fontSize:11,fontStyle:"bold"},
+      columnStyles:{1:{halign:"right"},2:{halign:"right"}}
+    });
+    y = doc.lastAutoTable.finalY + 20;
+  }
+
+  // Gastos
+  if(gastos.length){
+    if(y > 700){ doc.addPage(); y = 50; }
+    doc.setFont(undefined,"bold"); doc.setFontSize(11);
+    doc.text("Gastos ("+gastos.length+")", M, y); y += 6;
+    const totG = gastos.reduce((s,g)=>s+(g.monto||0),0);
+    doc.autoTable({
+      startY: y, margin:{left:M,right:M},
+      head:[["Concepto","Tipo","Monto"]],
+      body: gastos.map(g=>[g.concepto||"-",g.tipo||"-",fmt(g.monto)]),
+      foot:[["TOTAL","",fmt(totG)]],
+      theme:"grid",
+      headStyles:{fillColor:[212,119,90],textColor:255,fontSize:9},
+      bodyStyles:{fontSize:9},
+      footStyles:{fillColor:[30,32,40],textColor:[212,119,90],fontSize:10,fontStyle:"bold"},
+      columnStyles:{2:{halign:"right"}}
+    });
+    y = doc.lastAutoTable.finalY + 20;
+  }
+
+  // Resultado final
+  if(y > 720){ doc.addPage(); y = 50; }
+  const okCol = soloSemanas ? [201,168,76] : (utilidad>=0 ? [126,184,160] : [212,119,90]);
+  doc.setFillColor(okCol[0],okCol[1],okCol[2]);
+  doc.rect(M, y, W-M*2, 60, "F");
+  doc.setTextColor(255); doc.setFontSize(10);
+  doc.text(soloSemanas?"TOTAL SEMANAS":"UTILIDAD NETA", M+16, y+22);
+  doc.setFontSize(22); doc.setFont(undefined,"bold");
+  doc.text(fmt(soloSemanas?semTotal:utilidad), W-M-16, y+42, {align:"right"});
+
+  // Pie
+  doc.setTextColor(120); doc.setFont(undefined,"normal"); doc.setFontSize(8);
+  const total = doc.internal.getNumberOfPages();
+  for(let i=1;i<=total;i++){
+    doc.setPage(i);
+    doc.text("Generado el "+new Date().toLocaleString("es-MX"), M, doc.internal.pageSize.getHeight()-20);
+    doc.text("Página "+i+" de "+total, W-M, doc.internal.pageSize.getHeight()-20, {align:"right"});
+  }
+
+  const nombre = (soloSemanas?"reporte-semanas-":"reporte-ventas-semana-")+getWeekNum()+"-"+new Date().getFullYear()+".pdf";
+  doc.save(nombre);
+}
 
 function getWeekRange(){
   const now=new Date(), mon=new Date(now);
@@ -89,9 +272,6 @@ function App(){
   const [showSemana,   setShowSemana]   = useState(null); // semana guardada seleccionada
   const [guardando,    setGuardando]    = useState(false);
   const [guardado,     setGuardado]     = useState(false);
-  const [clientes,     setClientes]     = useState([]);
-  const [sugerencias,  setSugerencias]  = useState([]);
-  const [showSug,      setShowSug]      = useState(false);
 
   useEffect(()=>{
     setTimeout(()=>setAnimIn(true),80);
@@ -105,10 +285,7 @@ function App(){
     const u3 = semanasRef.orderBy("guardadoEn","desc").onSnapshot(
       s=>setSemanas(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}
     );
-    const u4 = clientesRef.onSnapshot(
-      s=>setClientes(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}
-    );
-    return()=>{u1();u2();u3();u4();};
+    return()=>{u1();u2();u3();};
   },[]);
 
   // --- Calculos ---
@@ -125,15 +302,6 @@ function App(){
   const totOtros   = gastos.filter(g=>g.tipo==="Gasto").reduce((s,g)=>s+(g.monto||0),0);
   const utilidad   = semTotal - totGastos;
 
-  // Lista unificada de clientes: guardados + de ventas actuales + de semanas guardadas
-  const todosClientes = (()=>{
-    const map = {};
-    clientes.forEach(c=>{ map[c.nombre.toLowerCase()] = {nombre:c.nombre,lugar:c.lugar||""}; });
-    ventas.forEach(v=>{ if(v.cliente){ const k=v.cliente.toLowerCase(); if(!map[k]) map[k]={nombre:v.cliente,lugar:v.lugar||""}; } });
-    semanas.forEach(s=>(s.ventas||[]).forEach(v=>{ if(v.cliente){ const k=v.cliente.toLowerCase(); if(!map[k]) map[k]={nombre:v.cliente,lugar:v.lugar||""}; } }));
-    return Object.values(map);
-  })();
-
   const filtTotal = filtered.reduce((s,v)=>s+(v.total||0),0);
   const filtCajas = filtered.reduce((s,v)=>s+(v.cajas||0),0);
 
@@ -144,16 +312,10 @@ function App(){
 
   // --- CRUD ventas ---
   const handleSubmit = async()=>{
-    if(!form.cliente||!form.lugar||!form.total)return;
+    if(!form.cliente||(!form.lugar&&form.dia!=="Semanas")||!form.total)return;
     const d={cliente:form.cliente.trim(),lugar:form.lugar.trim(),total:parseFloat(form.total)||0,cajas:parseInt(form.cajas)||0,dia:form.dia,
       creadoEn:editId?(ventas.find(v=>v.id===editId)||{}).creadoEn:firebase.firestore.FieldValue.serverTimestamp()};
     editId?await ventasRef.doc(editId).update(d):await ventasRef.add(d);
-    // Guardar cliente si es nuevo
-    if(!editId){
-      const nombre = form.cliente.trim().toLowerCase();
-      const existe = clientes.some(c=>c.nombre.toLowerCase()===nombre);
-      if(!existe) await clientesRef.add({nombre:form.cliente.trim(),lugar:form.lugar.trim(),creadoEn:firebase.firestore.FieldValue.serverTimestamp()});
-    }
     setEditId(null);setForm({cliente:"",lugar:"",total:"",cajas:"",dia:"Lunes"});
     setSaved(true);setTimeout(()=>setSaved(false),1800);
   };
@@ -230,6 +392,9 @@ function App(){
           <button onClick={handleClearWeek} style={{background:"rgba(212,119,90,.12)",color:"#d4775a",border:"1px solid rgba(212,119,90,.35)",padding:"4px 12px",borderRadius:"2px",fontFamily:"inherit",fontSize:"9px",letterSpacing:"3px",textTransform:"uppercase",cursor:"pointer"}}>
             BORRAR SEMANA
           </button>
+          <button onClick={()=>descargarPDF({ventas,gastos,semTotal,semAvg,semMax,semCajas,totGastos,totSueldos,totOtros,utilidad,porDia,porEst,modo:tab==="Semanas"?"semanas":"completo"})} style={{background:"rgba(143,168,212,.12)",color:"#8fa8d4",border:"1px solid rgba(143,168,212,.35)",padding:"4px 12px",borderRadius:"2px",fontFamily:"inherit",fontSize:"9px",letterSpacing:"3px",textTransform:"uppercase",cursor:"pointer"}}>
+            ⬇ DESCARGAR PDF
+          </button>
         </div>
       </div>
 
@@ -254,29 +419,48 @@ function App(){
     <div style={{maxWidth:"1100px",margin:"0 auto",padding:"24px 18px"}}>
 
       {/* ── KPI CARDS ── */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:"12px",marginBottom:"26px",opacity:animIn?1:0,transform:animIn?"none":"translateY(14px)",transition:"all .6s ease"}}>
-        {[
-          {label:"Total Semana",  value:fmt(semTotal), accent:"#c9a84c"},
-          {label:"Promedio",      value:fmt(semAvg),   accent:"#7eb8a0"},
-          {label:"Venta Alta",    value:fmt(semMax),   accent:"#d4775a"},
-          {label:"Clientes",      value:ventas.length, accent:"#8fa8d4"},
-          {label:"Total Cajas",   value:semCajas+" cjs",accent:"#b07fd4"},
-          {label:"Total Gastos",  value:fmt(totGastos),accent:"#d4775a"},
-          {label:"Utilidad Neta", value:fmt(utilidad), accent:utilidad>=0?"#7eb8a0":"#d4775a"},
-        ].map(k=>(
-          <div key={k.label} style={{background:"#141720",border:"1px solid rgba(255,255,255,.06)",borderTop:"3px solid "+k.accent,borderRadius:"4px",padding:"16px 18px"}}>
-            <div style={{fontSize:"8px",letterSpacing:"3px",color:"#6a6358",textTransform:"uppercase",marginBottom:"7px"}}>{k.label}</div>
-            <div style={{fontSize:"19px",fontWeight:"bold",color:k.accent}}>{k.value}</div>
+      {(()=>{
+        // Cuando el tab es un dia (incluye Semanas), calcular KPIs del dia; si no, KPIs de la semana completa
+        const vs = isDia ? ventas.filter(v=>v.dia===tab) : ventas;
+        const kTotal = vs.reduce((s,v)=>s+(v.total||0),0);
+        const kAvg   = vs.length?kTotal/vs.length:0;
+        const kMax   = vs.length?Math.max(...vs.map(v=>v.total||0)):0;
+        const kCajas = vs.reduce((s,v)=>s+(v.cajas||0),0);
+        const kUtil  = kTotal - (isDia?0:totGastos);
+        const kpis = isDia ? [
+          {label:"Total "+DL[tab], value:fmt(kTotal),      accent:"#c9a84c"},
+          {label:"Promedio",       value:fmt(kAvg),        accent:"#7eb8a0"},
+          {label:"Venta Alta",     value:fmt(kMax),        accent:"#d4775a"},
+          ...(tab==="Semanas"?[]:[{label:"Clientes", value:vs.length, accent:"#8fa8d4"}]),
+          {label:"Cajas",          value:kCajas+" cjs",    accent:"#b07fd4"},
+        ] : [
+          {label:"Total Semana",   value:fmt(semTotal),    accent:"#c9a84c"},
+          {label:"Promedio",       value:fmt(semAvg),      accent:"#7eb8a0"},
+          {label:"Venta Alta",     value:fmt(semMax),      accent:"#d4775a"},
+          {label:"Clientes",       value:ventas.length,    accent:"#8fa8d4"},
+          {label:"Total Cajas",    value:semCajas+" cjs",  accent:"#b07fd4"},
+          {label:"Total Gastos",   value:fmt(totGastos),   accent:"#d4775a"},
+          {label:"Utilidad Neta",  value:fmt(utilidad),    accent:utilidad>=0?"#7eb8a0":"#d4775a"},
+        ];
+        return(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:"12px",marginBottom:"26px",opacity:animIn?1:0,transform:animIn?"none":"translateY(14px)",transition:"all .6s ease"}}>
+            {kpis.map(k=>(
+              <div key={k.label} style={{background:"#141720",border:"1px solid rgba(255,255,255,.06)",borderTop:"3px solid "+k.accent,borderRadius:"4px",padding:"16px 18px"}}>
+                <div style={{fontSize:"8px",letterSpacing:"3px",color:"#6a6358",textTransform:"uppercase",marginBottom:"7px"}}>{k.label}</div>
+                <div style={{fontSize:"19px",fontWeight:"bold",color:k.accent}}>{k.value}</div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        );
+      })()}
 
       {/* ══════════════════════════════════════
           TAB: VENTAS (Todos / dias)
       ══════════════════════════════════════ */}
       {(tab==="Todos"||isDia)&&(<>
 
-        {/* Graficas */}
+        {/* Graficas (ocultar en Semanas) */}
+        {tab!=="Semanas"&&(
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"14px",marginBottom:"22px"}}>
           <div style={{background:"#141720",border:"1px solid rgba(255,255,255,.06)",borderRadius:"4px",padding:"18px"}}>
             <div style={{fontSize:"8px",letterSpacing:"4px",color:"#6a6358",textTransform:"uppercase",marginBottom:"14px"}}>QUE DIA SE VENDIO MAS</div>
@@ -307,55 +491,27 @@ function App(){
             }
           </div>
         </div>
+        )}
 
         {/* Formulario venta */}
         <div style={{background:"#141720",border:"1px solid rgba(201,168,76,.22)",borderRadius:"4px",padding:"20px",marginBottom:"20px"}}>
           <div style={{fontSize:"9px",letterSpacing:"4px",color:"#c9a84c",textTransform:"uppercase",marginBottom:"14px"}}>{editId?"EDITAR VENTA":"+ NUEVA VENTA"}</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:"10px",marginBottom:"12px"}}>
-            <div style={{position:"relative"}}>
-              <input
-                placeholder="Nombre del cliente"
-                value={form.cliente}
-                onChange={e=>{
-                  const v=e.target.value;
-                  setForm(f=>({...f,cliente:v}));
-                  if(v.length>=2){
-                    const s=todosClientes.filter(c=>c.nombre.toLowerCase().includes(v.toLowerCase())).slice(0,6);
-                    setSugerencias(s); setShowSug(s.length>0);
-                  } else { setShowSug(false); }
-                }}
-                onBlur={()=>setTimeout(()=>setShowSug(false),180)}
-                onFocus={()=>{
-                  if(form.cliente.length>=2){
-                    const s=todosClientes.filter(c=>c.nombre.toLowerCase().includes(form.cliente.toLowerCase())).slice(0,6);
-                    setSugerencias(s); setShowSug(s.length>0);
-                  }
-                }}
-                style={SI}
-                autoComplete="off"
-              />
-              {showSug&&(
-                <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1e2130",border:"1px solid rgba(201,168,76,.3)",borderTop:"none",borderRadius:"0 0 4px 4px",zIndex:99,maxHeight:"180px",overflowY:"auto"}}>
-                  {sugerencias.map((c,i)=>(
-                    <div key={i}
-                      onMouseDown={()=>{setForm(f=>({...f,cliente:c.nombre,lugar:f.lugar||c.lugar}));setShowSug(false);}}
-                      style={{padding:"9px 14px",cursor:"pointer",borderBottom:"1px solid rgba(255,255,255,.05)",transition:"background .15s",display:"flex",justifyContent:"space-between",alignItems:"center"}}
-                      onMouseEnter={e=>e.currentTarget.style.background="rgba(201,168,76,.1)"}
-                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}
-                    >
-                      <span style={{fontSize:"13px",color:"#e8e0d0"}}>{c.nombre}</span>
-                      <span style={{fontSize:"10px",color:"#6a6358"}}>📍 {c.lugar}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <input placeholder="Lugar del cliente"  value={form.lugar}   onChange={e=>setForm(f=>({...f,lugar:e.target.value}))}   style={SI}/>
+            {tab==="Semanas"
+              ? <select value={form.cliente} onChange={e=>setForm(f=>({...f,cliente:e.target.value,dia:"Semanas"}))} style={{...SI,cursor:"pointer",appearance:"none"}}>
+                  <option value="">Selecciona semana...</option>
+                  <option value="Semana 1">Semana 1</option>
+                  <option value="Semana 2">Semana 2</option>
+                  <option value="Semana 3">Semana 3</option>
+                  <option value="Semana 4">Semana 4</option>
+                </select>
+              : <input placeholder="Nombre del cliente" value={form.cliente} onChange={e=>setForm(f=>({...f,cliente:e.target.value}))} style={SI}/>}
+            {tab!=="Semanas"&&<input placeholder="Lugar del cliente"  value={form.lugar}   onChange={e=>setForm(f=>({...f,lugar:e.target.value}))}   style={SI}/>}
             <input placeholder="Total ($)" type="number" value={form.total} onChange={e=>setForm(f=>({...f,total:e.target.value}))} style={SI}/>
             <input placeholder="Cajas" type="number" value={form.cajas} onChange={e=>setForm(f=>({...f,cajas:e.target.value}))} style={SI}/>
-            <select value={form.dia} onChange={e=>setForm(f=>({...f,dia:e.target.value}))} style={{...SI,cursor:"pointer",appearance:"none"}}>
+            {tab!=="Semanas"&&<select value={form.dia} onChange={e=>setForm(f=>({...f,dia:e.target.value}))} style={{...SI,cursor:"pointer",appearance:"none"}}>
               {DIAS.map(d=><option key={d} value={d}>{DL[d]}</option>)}
-            </select>
+            </select>}
           </div>
           <div style={{display:"flex",gap:"10px",flexWrap:"wrap",alignItems:"center"}}>
             <button onClick={handleSubmit} style={{background:"#c9a84c",color:"#0d0f14",border:"none",padding:"9px 20px",borderRadius:"3px",fontFamily:"inherit",fontSize:"10px",letterSpacing:"2px",textTransform:"uppercase",cursor:"pointer",fontWeight:"bold"}}>{editId?"GUARDAR":"AGREGAR"}</button>
@@ -375,7 +531,7 @@ function App(){
           <table style={{width:"100%",borderCollapse:"collapse",minWidth:"500px"}}>
             <thead>
               <tr style={{borderBottom:"2px solid rgba(201,168,76,.28)"}}>
-                {["#","Dia","Cliente","Lugar","Cajas","Total",""].map((h,i)=>(
+                {(tab==="Semanas"?["#","Semana","Cajas","Total",""]:["#","Dia","Cliente","Lugar","Cajas","Total",""]).map((h,i)=>(
                   <th key={i} style={{padding:"12px 14px",textAlign:(h==="Total"||h==="Cajas")?"right":"left",fontSize:"8px",letterSpacing:"3px",textTransform:"uppercase",color:"#6a6358",fontWeight:"normal"}}>{h}</th>
                 ))}
               </tr>
@@ -388,9 +544,9 @@ function App(){
                   onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,.014)"}
                 >
                   <td style={{padding:"12px 14px",fontSize:"10px",color:"#4a4540",width:"34px"}}>{String(i+1).padStart(2,"0")}</td>
-                  <td style={{padding:"12px 14px",fontSize:"9px",whiteSpace:"nowrap"}}><span style={{background:"rgba(201,168,76,.11)",color:"#c9a84c",padding:"3px 6px",borderRadius:"2px"}}>{DL[v.dia]||v.dia||"—"}</span></td>
+                  {tab!=="Semanas"&&<td style={{padding:"12px 14px",fontSize:"9px",whiteSpace:"nowrap"}}><span style={{background:"rgba(201,168,76,.11)",color:"#c9a84c",padding:"3px 6px",borderRadius:"2px"}}>{DL[v.dia]||v.dia||"—"}</span></td>}
                   <td style={{padding:"12px 14px",fontSize:"13px",color:"#e8e0d0"}}>{v.cliente}</td>
-                  <td style={{padding:"12px 14px",fontSize:"11px",color:"#8a7d65"}}>📍 {v.lugar}</td>
+                  {tab!=="Semanas"&&<td style={{padding:"12px 14px",fontSize:"11px",color:"#8a7d65"}}>📍 {v.lugar}</td>}
                   <td style={{padding:"12px 14px",fontSize:"11px",color:"#8fa8d4",textAlign:"right"}}>{v.cajas||0} 📦</td>
                   <td style={{padding:"12px 14px",fontSize:"13px",color:"#c9a84c",textAlign:"right",fontWeight:"bold"}}>{fmt(v.total)}</td>
                   <td style={{padding:"12px 14px",textAlign:"right",whiteSpace:"nowrap"}}>
@@ -399,11 +555,11 @@ function App(){
                   </td>
                 </tr>
               ))}
-              {filtered.length===0&&<tr><td colSpan={7} style={{padding:"36px",textAlign:"center",color:"#4a4540",fontSize:"11px",letterSpacing:"2px"}}>SIN REGISTROS</td></tr>}
+              {filtered.length===0&&<tr><td colSpan={tab==="Semanas"?5:7} style={{padding:"36px",textAlign:"center",color:"#4a4540",fontSize:"11px",letterSpacing:"2px"}}>SIN REGISTROS</td></tr>}
             </tbody>
             <tfoot>
               <tr style={{borderTop:"2px solid rgba(201,168,76,.28)"}}>
-                <td colSpan={4} style={{padding:"12px 14px",fontSize:"8px",letterSpacing:"3px",color:"#6a6358",textTransform:"uppercase"}}>{isDia?"Total "+DL[tab]:"Total Semana"}</td>
+                <td colSpan={tab==="Semanas"?2:4} style={{padding:"12px 14px",fontSize:"8px",letterSpacing:"3px",color:"#6a6358",textTransform:"uppercase"}}>{isDia?"Total "+DL[tab]:"Total Semana"}</td>
                 <td style={{padding:"12px 14px",textAlign:"right",fontSize:"11px",color:"#8fa8d4"}}>{filtCajas} 📦</td>
                 <td style={{padding:"12px 14px",textAlign:"right",fontSize:"14px",color:"#c9a84c",fontWeight:"bold"}}>{fmt(filtTotal)}</td>
                 <td/>
@@ -561,6 +717,7 @@ function App(){
                     <div style={{fontSize:"8px",letterSpacing:"2px",color:"#6a6358",textTransform:"uppercase"}}>Utilidad</div>
                     <div style={{fontSize:"16px",color:s.utilidadNeta>=0?"#7eb8a0":"#d4775a",fontWeight:"bold"}}>{fmt(s.utilidadNeta)}</div>
                   </div>
+                  <button onClick={e=>{e.stopPropagation();handleDeleteSemana(s.id);}} style={{background:"rgba(212,119,90,.12)",color:"#d4775a",border:"1px solid rgba(212,119,90,.3)",padding:"4px 10px",borderRadius:"2px",fontFamily:"inherit",fontSize:"8px",letterSpacing:"2px",textTransform:"uppercase",cursor:"pointer"}}>BORRAR</button>
                   <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
                   <button onClick={e=>{e.stopPropagation();if(window.confirm("Eliminar esta semana guardada?"))semanasRef.doc(s.id).delete();}} style={{background:"rgba(212,119,90,.12)",color:"#d4775a",border:"1px solid rgba(212,119,90,.3)",padding:"4px 10px",borderRadius:"2px",fontFamily:"inherit",fontSize:"8px",letterSpacing:"2px",textTransform:"uppercase",cursor:"pointer"}}>BORRAR</button>
                   <span style={{color:"#6a6358",fontSize:"16px"}}>{showSemana===s.id?"▲":"▼"}</span>
@@ -673,7 +830,8 @@ function App(){
                 </div>
               </div>
             </div>
-            <button onClick={()=>setShowResumen(false)} style={{width:"100%",marginTop:"16px",background:"transparent",border:"1px solid rgba(255,255,255,.1)",color:"#6a6358",padding:"11px",fontFamily:"inherit",fontSize:"9px",letterSpacing:"3px",textTransform:"uppercase",cursor:"pointer",borderRadius:"3px"}}>CERRAR</button>
+            <button onClick={()=>descargarPDF({ventas,gastos,semTotal,semAvg,semMax,semCajas,totGastos,totSueldos,totOtros,utilidad,porDia,porEst,modo:tab==="Semanas"?"semanas":"completo"})} style={{width:"100%",marginTop:"16px",background:"rgba(143,168,212,.12)",border:"1px solid rgba(143,168,212,.35)",color:"#8fa8d4",padding:"11px",fontFamily:"inherit",fontSize:"9px",letterSpacing:"3px",textTransform:"uppercase",cursor:"pointer",borderRadius:"3px",fontWeight:"bold"}}>⬇ DESCARGAR PDF</button>
+            <button onClick={()=>setShowResumen(false)} style={{width:"100%",marginTop:"10px",background:"transparent",border:"1px solid rgba(255,255,255,.1)",color:"#6a6358",padding:"11px",fontFamily:"inherit",fontSize:"9px",letterSpacing:"3px",textTransform:"uppercase",cursor:"pointer",borderRadius:"3px"}}>CERRAR</button>
           </div>
         </div>
       </div>
