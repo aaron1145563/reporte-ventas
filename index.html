@@ -55,8 +55,8 @@ function fmt(n){return (n||0).toLocaleString("es-MX",{style:"currency",currency:
 
 function descargarPDF({ventas,gastos,semTotal,semAvg,semMax,semCajas,totGastos,totSueldos,totOtros,utilidad,porDia,porEst,modo}){
   const soloSemanas = modo==="semanas";
-  // Si es modo Semanas, filtrar todo a solo ventas con dia="Semanas"
   if(soloSemanas){
+    // Modo Semanas: solo ventas con dia="Semanas", sin gastos
     ventas = ventas.filter(v=>v.dia==="Semanas");
     gastos = [];
     semTotal = ventas.reduce((s,v)=>s+(v.total||0),0);
@@ -67,6 +67,9 @@ function descargarPDF({ventas,gastos,semTotal,semAvg,semMax,semCajas,totGastos,t
     utilidad = semTotal;
     porDia   = [{dia:"Semanas",total:semTotal}].filter(d=>d.total>0);
     porEst   = [];
+  } else {
+    // Modo completo: excluir Semanas de todo (es una seccion aparte)
+    ventas = ventas.filter(v=>v.dia!=="Semanas");
   }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({unit:"pt",format:"a4"});
@@ -155,7 +158,7 @@ function descargarPDF({ventas,gastos,semTotal,semAvg,semMax,semCajas,totGastos,t
   if(ventas.length){
     doc.setFont(undefined,"bold"); doc.setFontSize(11);
     doc.text("Detalle de ventas por día", M, y); y += 10;
-    const DIAS_ORDEN = ["Lunes","Martes","Miercoles","Jueves","Viernes","Semanas"];
+    const DIAS_ORDEN = soloSemanas ? ["Semanas"] : ["Lunes","Martes","Miercoles","Jueves","Viernes"];
     DIAS_ORDEN.forEach(dia=>{
       const vs = ventas.filter(v=>v.dia===dia);
       if(!vs.length) return;
@@ -290,13 +293,18 @@ function App(){
 
   // --- Calculos ---
   const isDia     = DIAS.includes(tab);
-  const filtered  = (isDia ? ventas.filter(v=>v.dia===tab) : ventas)
-    .filter(v=>(v.cliente||"").toLowerCase().includes(search.toLowerCase())||(v.lugar||"").toLowerCase().includes(search.toLowerCase()));
+  // Semanas es una seccion separada: no cuenta en totales/graficas de la semana
+  const ventasDias = ventas.filter(v=>v.dia!=="Semanas");
+  const base = tab==="Semanas" ? ventas.filter(v=>v.dia==="Semanas")
+             : isDia ? ventas.filter(v=>v.dia===tab)
+             : ventasDias;
+  const filtered  = base.filter(v=>(v.cliente||"").toLowerCase().includes(search.toLowerCase())||(v.lugar||"").toLowerCase().includes(search.toLowerCase()));
 
-  const semTotal   = ventas.reduce((s,v)=>s+(v.total||0),0);
-  const semAvg     = ventas.length?semTotal/ventas.length:0;
-  const semMax     = ventas.length?Math.max(...ventas.map(v=>v.total||0)):0;
-  const semCajas   = ventas.reduce((s,v)=>s+(v.cajas||0),0);
+  // Totales de la semana (Lun-Vie, sin Semanas)
+  const semTotal   = ventasDias.reduce((s,v)=>s+(v.total||0),0);
+  const semAvg     = ventasDias.length?semTotal/ventasDias.length:0;
+  const semMax     = ventasDias.length?Math.max(...ventasDias.map(v=>v.total||0)):0;
+  const semCajas   = ventasDias.reduce((s,v)=>s+(v.cajas||0),0);
   const totGastos  = gastos.reduce((s,g)=>s+(g.monto||0),0);
   const totSueldos = gastos.filter(g=>g.tipo==="Sueldo").reduce((s,g)=>s+(g.monto||0),0);
   const totOtros   = gastos.filter(g=>g.tipo==="Gasto").reduce((s,g)=>s+(g.monto||0),0);
@@ -305,9 +313,10 @@ function App(){
   const filtTotal = filtered.reduce((s,v)=>s+(v.total||0),0);
   const filtCajas = filtered.reduce((s,v)=>s+(v.cajas||0),0);
 
-  const porDia = DIAS.map(d=>({dia:d,total:ventas.filter(v=>v.dia===d).reduce((s,v)=>s+(v.total||0),0)})).filter(d=>d.total>0);
+  // Graficas: solo dias reales (excluir Semanas)
+  const porDia = DIAS.filter(d=>d!=="Semanas").map(d=>({dia:d,total:ventasDias.filter(v=>v.dia===d).reduce((s,v)=>s+(v.total||0),0)})).filter(d=>d.total>0);
   const dMax   = porDia.length?Math.max(...porDia.map(d=>d.total)):1;
-  const porEst = Object.values(ventas.reduce((a,v)=>{const k=v.lugar||"?";if(!a[k])a[k]={lugar:k,total:0};a[k].total+=v.total||0;return a;},{}));
+  const porEst = Object.values(ventasDias.reduce((a,v)=>{const k=v.lugar||"?";if(!a[k])a[k]={lugar:k,total:0};a[k].total+=v.total||0;return a;},{}));
   const eMax   = porEst.length?Math.max(...porEst.map(e=>e.total)):1;
 
   // --- CRUD ventas ---
