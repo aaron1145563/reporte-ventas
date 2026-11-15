@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Panel de Control - Reporte de Ventas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #f4f5fa;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #1e293b;
+    -webkit-font-smoothing: antialiased;
+  }
+  input::placeholder, select option { color: #94a3b8; }
+  input:focus, select:focus {
+    border-color: #5850ec !important;
+    box-shadow: 0 0 0 3px rgba(88, 80, 236, 0.15) !important;
+    outline: none;
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #f1f5f9; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .animate-fade { animation: fadeIn 0.3s ease forwards; }
+  @media(max-width: 900px) {
+    .dashboard-layout { flex-direction: column !important; }
+    .sidebar { width: 100% !important; height: auto !important; position: static !important; }
+    .main-content { margin-left: 0 !important; width: 100% !important; padding: 16px !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+  var firebaseConfig = {
+    apiKey: "AIzaSyCaTE8CruzVoXbuxiWw7780IHtuKNwC17Q",
+    authDomain: "cuenta-25c64.firebaseapp.com",
+    projectId: "cuenta-25c64",
+    storageBucket: "cuenta-25c64.firebasestorage.app",
+    messagingSenderId: "728683182116",
+    appId: "1:728683182116:web:4cf969d1216c7f484f00b1"
+  };
+  firebase.initializeApp(firebaseConfig);
+  var db = firebase.firestore();
+  var ventasRef   = db.collection("ventas");
+  var gastosRef   = db.collection("gastos");
+  var semanasRef  = db.collection("semanas_guardadas");
+</script>
+
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const DIAS = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Semanas"];
+const DL   = { Lunes: "Lunes", Martes: "Martes", Miercoles: "Miércoles", Jueves: "Jueves", Viernes: "Viernes", Semanas: "Semanas" };
+const TABS = ["Todos", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Semanas", "Gastos", "Historial"];
+const TAB_LBL = {
+  Todos: "Panel de Control",
+  Lunes: "Lunes",
+  Martes: "Martes",
+  Miercoles: "Miércoles",
+  Jueves: "Jueves",
+  Viernes: "Viernes",
+  Semanas: "Semanas",
+  Gastos: "Gastos",
+  Historial: "Historial"
+};
+
+const SI = {
+  background: "#ffffff",
+  border: "1px solid #e2e8f0",
+  borderRadius: "8px",
+  padding: "10px 14px",
+  color: "#1e293b",
+  fontSize: "13px",
+  fontFamily: "inherit",
+  width: "100%",
+  transition: "all 0.2s"
+};
+
+function fmt(n) {
+  return (n || 0).toLocaleString("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 });
+}
+
+function descargarPDF({ ventas, gastos, semTotal, semAvg, semMax, semCajas, totGastos, totSueldos, totOtros, utilidad, porDia, porEst, modo }) {
+  const soloSemanas = modo === "semanas";
+  if (soloSemanas) {
+    ventas = ventas.filter(v => v.dia === "Semanas");
+    gastos = [];
+    semTotal = ventas.reduce((s, v) => s + (v.total || 0), 0);
+    semAvg   = ventas.length ? semTotal / ventas.length : 0;
+    semMax   = ventas.length ? Math.max(...ventas.map(v => v.total || 0)) : 0;
+    semCajas = ventas.reduce((s, v) => s + (v.cajas || 0), 0);
+    totGastos = 0; totSueldos = 0; totOtros = 0;
+    utilidad = semTotal;
+    porDia   = [{ dia: "Semanas", total: semTotal }].filter(d => d.total > 0);
+    porEst   = [];
+  } else {
+    ventas = ventas.filter(v => v.dia !== "Semanas");
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth();
+  const M = 40;
+  let y = 50;
+
+  // Encabezado
+  doc.setFillColor(15, 14, 56); doc.rect(0, 0, W, 80, "F");
+  doc.setFillColor(88, 80, 236); doc.rect(0, 78, W, 2, "F");
+  doc.setTextColor(199, 210, 254); doc.setFontSize(9);
+  doc.text(soloSemanas ? "REPORTE - SECCIÓN SEMANAS" : "REPORTE SEMANAL DE VENTAS", M, 32);
+  doc.setTextColor(255, 255, 255); doc.setFontSize(22);
+  doc.text(soloSemanas ? "SEMANAS" : "PANEL DE VENTAS", M, 58);
+  doc.setTextColor(148, 163, 184); doc.setFontSize(10);
+  doc.text("Semana " + getWeekNum() + " · " + getWeekRange(), M, 72);
+
+  y = 110;
+  doc.setTextColor(20, 20, 20);
+
+  // KPIs
+  doc.setFontSize(11); doc.setFont(undefined, "bold");
+  doc.text("Resumen General", M, y); y += 14;
+  doc.setFont(undefined, "normal"); doc.setFontSize(10);
+  const kpis = soloSemanas ? [
+    ["Total Semanas", fmt(semTotal)],
+    ["Promedio", fmt(semAvg)],
+    ["Venta más alta", fmt(semMax)],
+    ["Registros", String(ventas.length)],
+    ["Total cajas", String(semCajas)],
+  ] : [
+    ["Total Semana", fmt(semTotal)],
+    ["Promedio por cliente", fmt(semAvg)],
+    ["Venta más alta", fmt(semMax)],
+    ["Clientes", String(ventas.length)],
+    ["Total cajas", String(semCajas)],
+    ["Total gastos", fmt(totGastos)],
+    ["Sueldos", fmt(totSueldos)],
+    ["Otros gastos", fmt(totOtros)],
+    ["Utilidad neta", fmt(utilidad)],
+  ];
+  doc.autoTable({
+    startY: y, margin: { left: M, right: M },
+    head: [["Concepto", "Valor"]],
+    body: kpis,
+    theme: "grid",
+    headStyles: { fillColor: [88, 80, 236], textColor: 255, fontSize: 9 },
+    bodyStyles: { fontSize: 9 },
+    columnStyles: { 1: { halign: "right" } }
+  });
+  y = doc.lastAutoTable.finalY + 20;
+
+  // Ventas por día
+  if (porDia.length) {
+    doc.setFont(undefined, "bold"); doc.setFontSize(11);
+    doc.text("Ventas por día", M, y); y += 6;
+    doc.autoTable({
+      startY: y, margin: { left: M, right: M },
+      head: [["Día", "Total"]],
+      body: porDia.map(d => [d.dia, fmt(d.total)]),
+      theme: "striped",
+      headStyles: { fillColor: [88, 80, 236], textColor: 255, fontSize: 9 },
+      bodyStyles: { fontSize: 9 },
+      columnStyles: { 1: { halign: "right" } }
+    });
+    y = doc.lastAutoTable.finalY + 20;
+  }
+
+  // Ventas por lugar
+  if (porEst.length) {
+    doc.setFont(undefined, "bold"); doc.setFontSize(11);
+    doc.text("Ventas por lugar", M, y); y += 6;
+    doc.autoTable({
+      startY: y, margin: { left: M, right: M },
+      head: [["Lugar", "Total"]],
+      body: porEst.map(e => [e.lugar, fmt(e.total)]),
+      theme: "striped",
+      headStyles: { fillColor: [14, 165, 233], textColor: 255, fontSize: 9 },
+      bodyStyles: { fontSize: 9 },
+      columnStyles: { 1: { halign: "right" } }
+    });
+    y = doc.lastAutoTable.finalY + 20;
+  }
+
+  // Detalle de ventas
+  if (ventas.length) {
+    doc.setFont(undefined, "bold"); doc.setFontSize(11);
+    doc.text("Detalle de ventas por día", M, y); y += 10;
+    const DIAS_ORDEN = soloSemanas ? ["Semanas"] : ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes"];
+    DIAS_ORDEN.forEach(dia => {
+      const vs = ventas.filter(v => v.dia === dia);
+      if (!vs.length) return;
+      const totC = vs.reduce((s, v) => s + (v.cajas || 0), 0);
+      const totV = vs.reduce((s, v) => s + (v.total || 0), 0);
+      if (y > 720) { doc.addPage(); y = 50; }
+      doc.setFont(undefined, "bold"); doc.setFontSize(10); doc.setTextColor(88, 80, 236);
+      doc.text(dia + " (" + vs.length + ")", M, y); y += 4;
+      doc.setTextColor(20, 20, 20);
+      doc.autoTable({
+        startY: y, margin: { left: M, right: M },
+        head: [["Cliente", "Lugar", "Cajas", "Total"]],
+        body: vs.map(v => [v.cliente || "-", v.lugar || "-", String(v.cajas || 0), fmt(v.total)]),
+        foot: [["TOTAL " + dia.toUpperCase(), "", String(totC) + " cjs", fmt(totV)]],
+        theme: "grid",
+        headStyles: { fillColor: [88, 80, 236], textColor: 255, fontSize: 9 },
+        bodyStyles: { fontSize: 8 },
+        footStyles: { fillColor: [241, 245, 249], textColor: [88, 80, 236], fontSize: 10, fontStyle: "bold" },
+        columnStyles: { 2: { halign: "right" }, 3: { halign: "right" } }
+      });
+      y = doc.lastAutoTable.finalY + 14;
+    });
+    if (y > 720) { doc.addPage(); y = 50; }
+    const gTotC = ventas.reduce((s, v) => s + (v.cajas || 0), 0);
+    const gTotV = ventas.reduce((s, v) => s + (v.total || 0), 0);
+    doc.autoTable({
+      startY: y, margin: { left: M, right: M },
+      body: [["GRAN TOTAL SEMANA", String(gTotC) + " cjs", fmt(gTotV)]],
+      theme: "grid",
+      bodyStyles: { fillColor: [88, 80, 236], textColor: 255, fontSize: 11, fontStyle: "bold" },
+      columnStyles: { 1: { halign: "right" }, 2: { halign: "right" } }
+    });
+    y = doc.lastAutoTable.finalY + 20;
+  }
+
+  // Gastos
+  if (gastos.length) {
+    if (y > 700) { doc.addPage(); y = 50; }
+    doc.setFont(undefined, "bold"); doc.setFontSize(11);
+    doc.text("Gastos (" + gastos.length + ")", M, y); y += 6;
+    const totG = gastos.reduce((s, g) => s + (g.monto || 0), 0);
+    doc.autoTable({
+      startY: y, margin: { left: M, right: M },
+      head: [["Concepto", "Tipo", "Monto"]],
+      body: gastos.map(g => [g.concepto || "-", g.tipo || "-", fmt(g.monto)]),
+      foot: [["TOTAL", "", fmt(totG)]],
+      theme: "grid",
+      headStyles: { fillColor: [239, 68, 68], textColor: 255, fontSize: 9 },
+      bodyStyles: { fontSize: 9 },
+      footStyles: { fillColor: [254, 242, 242], textColor: [239, 68, 68], fontSize: 10, fontStyle: "bold" },
+      columnStyles: { 2: { halign: "right" } }
+    });
+    y = doc.lastAutoTable.finalY + 20;
+  }
+
+  // Resultado final
+  if (y > 720) { doc.addPage(); y = 50; }
+  const okCol = soloSemanas ? [88, 80, 236] : (utilidad >= 0 ? [16, 185, 129] : [239, 68, 68]);
+  doc.setFillColor(okCol[0], okCol[1], okCol[2]);
+  doc.rect(M, y, W - M * 2, 60, "F");
+  doc.setTextColor(255); doc.setFontSize(10);
+  doc.text(soloSemanas ? "TOTAL SEMANAS" : "UTILIDAD NETA", M + 16, y + 22);
+  doc.setFontSize(22); doc.setFont(undefined, "bold");
+  doc.text(fmt(soloSemanas ? semTotal : utilidad), W - M - 16, y + 42, { align: "right" });
+
+  const total = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i);
+    doc.setTextColor(148, 163, 184); doc.setFontSize(8);
+    doc.text("Generado el " + new Date().toLocaleString("es-MX"), M, doc.internal.pageSize.getHeight() - 20);
+    doc.text("Página " + i + " de " + total, W - M, doc.internal.pageSize.getHeight() - 20, { align: "right" });
+  }
+
+  const nombre = (soloSemanas ? "reporte-semanas-" : "reporte-ventas-semana-") + getWeekNum() + "-" + new Date().getFullYear() + ".pdf";
+  doc.save(nombre);
+}
+
+function getWeekRange() {
+  const now = new Date(), mon = new Date(now);
+  mon.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+  const f = d => d.toLocaleDateString("es-MX", { day: "2-digit", month: "short" });
+  return f(mon) + " - " + f(sun) + ", " + now.getFullYear();
+}
+function getWeekNum() {
+  const now = new Date(), s = new Date(now.getFullYear(), 0, 1);
+  return Math.ceil(((now - s) / 86400000 + s.getDay() + 1) / 7);
+}
+
+// Iconos SVG limpios y ligeros
+const Icons = {
+  dashboard: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>,
+  calendar: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+  layers: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>,
+  wallet: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>,
+  history: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+  download: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+  save: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>,
+  trash: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+  search: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+  box: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+};
+
+function App() {
+  const [ventas,   setVentas]   = useState([]);
+  const [gastos,   setGastos]   = useState([]);
+  const [semanas,  setSemanas]  = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [fbError,  setFbError]  = useState(null);
+  const [tab,      setTab]      = useState("Todos");
+  const [search,   setSearch]   = useState("");
+
+  // Venta form
+  const [form,    setForm]    = useState({ cliente: "", lugar: "", total: "", cajas: "", dia: "Lunes" });
+  const [editId,  setEditId]  = useState(null);
+  const [saved,   setSaved]   = useState(false);
+
+  // Gasto form
+  const [gForm,   setGForm]   = useState({ concepto: "", monto: "", tipo: "Sueldo" });
+  const [gEditId, setGEditId] = useState(null);
+  const [gSaved,  setGSaved]  = useState(false);
+
+  // UI Modals
+  const [showResumen, setShowResumen] = useState(false);
+  const [showSemana,  setShowSemana]  = useState(null);
+  const [guardando,   setGuardando]   = useState(false);
+  const [guardado,    setGuardado]    = useState(false);
+
+  useEffect(() => {
+    const u1 = ventasRef.orderBy("creadoEn", "asc").onSnapshot(
+      s => { setVentas(s.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); },
+      e => { setFbError(e.message); setLoading(false); }
+    );
+    const u2 = gastosRef.orderBy("creadoEn", "asc").onSnapshot(
+      s => setGastos(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => {}
+    );
+    const u3 = semanasRef.orderBy("guardadoEn", "desc").onSnapshot(
+      s => setSemanas(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => {}
+    );
+    return () => { u1(); u2(); u3(); };
+  }, []);
+
+  // --- Calculos ---
+  const isDia = DIAS.includes(tab);
+  const ventasDias = ventas.filter(v => v.dia !== "Semanas");
+  const base = tab === "Semanas" ? ventas.filter(v => v.dia === "Semanas")
+             : isDia ? ventas.filter(v => v.dia === tab)
+             : ventasDias;
+  const filtered = base.filter(v => (v.cliente || "").toLowerCase().includes(search.toLowerCase()) || (v.lugar || "").toLowerCase().includes(search.toLowerCase()));
+
+  // Totales
+  const semTotal   = ventasDias.reduce((s, v) => s + (v.total || 0), 0);
+  const semAvg     = ventasDias.length ? semTotal / ventasDias.length : 0;
+  const semMax     = ventasDias.length ? Math.max(...ventasDias.map(v => v.total || 0)) : 0;
+  const semCajas   = ventasDias.reduce((s, v) => s + (v.cajas || 0), 0);
+  const totGastos  = gastos.reduce((s, g) => s + (g.monto || 0), 0);
+  const totSueldos = gastos.filter(g => g.tipo === "Sueldo").reduce((s, g) => s + (g.monto || 0), 0);
+  const totOtros   = gastos.filter(g => g.tipo === "Gasto").reduce((s, g) => s + (g.monto || 0), 0);
+  const utilidad   = semTotal - totGastos;
+
+  const filtTotal = filtered.reduce((s, v) => s + (v.total || 0), 0);
+  const filtCajas = filtered.reduce((s, v) => s + (v.cajas || 0), 0);
+
+  // Graficas
+  const porDia = DIAS.filter(d => d !== "Semanas").map(d => ({ dia: d, total: ventasDias.filter(v => v.dia === d).reduce((s, v) => s + (v.total || 0), 0) })).filter(d => d.total > 0);
+  const dMax   = porDia.length ? Math.max(...porDia.map(d => d.total)) : 1;
+  const porEst = Object.values(ventasDias.reduce((a, v) => { const k = v.lugar || "?"; if (!a[k]) a[k] = { lugar: k, total: 0 }; a[k].total += v.total || 0; return a; }, {}));
+  const eMax   = porEst.length ? Math.max(...porEst.map(e => e.total)) : 1;
+
+  // --- CRUD ventas ---
+  const handleSubmit = async () => {
+    if (!form.cliente || (!form.lugar && form.dia !== "Semanas") || !form.total) return;
+    const d = {
+      cliente: form.cliente.trim(),
+      lugar: form.lugar.trim(),
+      total: parseFloat(form.total) || 0,
+      cajas: parseInt(form.cajas) || 0,
+      dia: form.dia,
+      creadoEn: editId ? (ventas.find(v => v.id === editId) || {}).creadoEn : firebase.firestore.FieldValue.serverTimestamp()
+    };
+    editId ? await ventasRef.doc(editId).update(d) : await ventasRef.add(d);
+    setEditId(null); setForm({ cliente: "", lugar: "", total: "", cajas: "", dia: "Lunes" });
+    setSaved(true); setTimeout(() => setSaved(false), 1800);
+  };
+  const handleEdit = v => { setEditId(v.id); setForm({ cliente: v.cliente, lugar: v.lugar, total: String(v.total), cajas: String(v.cajas || ""), dia: v.dia || "Lunes" }); };
+  const handleDelete = async id => { if (window.confirm("¿Eliminar este registro?")) await ventasRef.doc(id).delete(); };
+
+  // --- CRUD gastos ---
+  const handleGasto = async () => {
+    if (!gForm.concepto || !gForm.monto) return;
+    const d = {
+      concepto: gForm.concepto.trim(),
+      monto: parseFloat(gForm.monto) || 0,
+      tipo: gForm.tipo,
+      creadoEn: gEditId ? (gastos.find(g => g.id === gEditId) || {}).creadoEn : firebase.firestore.FieldValue.serverTimestamp()
+    };
+    gEditId ? await gastosRef.doc(gEditId).update(d) : await gastosRef.add(d);
+    setGEditId(null); setGForm({ concepto: "", monto: "", tipo: "Sueldo" });
+    setGSaved(true); setTimeout(() => setGSaved(false), 1800);
+  };
+  const handleGastoEdit = g => { setGEditId(g.id); setGForm({ concepto: g.concepto, monto: String(g.monto), tipo: g.tipo || "Sueldo" }); };
+  const handleGastoDelete = async id => { if (window.confirm("¿Eliminar gasto?")) await gastosRef.doc(id).delete(); };
+
+  // --- Guardar / Borrar semana ---
+  const handleGuardar = async () => {
+    setGuardando(true);
+    await semanasRef.add({
+      semana: getWeekNum(), rango: getWeekRange(), ano: new Date().getFullYear(),
+      totalVentas: semTotal, totalGastos: totGastos, totalSueldos: totSueldos, totalOtros: totOtros,
+      utilidadNeta: utilidad, totalCajas: semCajas, numClientes: ventas.length,
+      ventas: ventas.map(v => ({ cliente: v.cliente, lugar: v.lugar, total: v.total, cajas: v.cajas, dia: v.dia })),
+      gastos: gastos.map(g => ({ concepto: g.concepto, monto: g.monto, tipo: g.tipo })),
+      guardadoEn: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    setGuardando(false); setGuardado(true); setTimeout(() => setGuardado(false), 2500);
+  };
+  const handleDeleteSemana = async id => {
+    if (!window.confirm("¿Borrar esta semana guardada?")) return;
+    await semanasRef.doc(id).delete();
+  };
+  const handleClearWeek = async () => {
+    if (!window.confirm("¿Borrar TODOS los registros de la semana?")) return;
+    const s = await ventasRef.get(), b = db.batch();
+    s.docs.forEach(d => b.delete(d.ref)); await b.commit();
+  };
+
+  if (loading) return (
+    <div style={{ minHeight: "100vh", background: "#0e0c38", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "16px" }}>
+      <div style={{ width: "38px", height: "38px", border: "3px solid rgba(255,255,255,0.15)", borderTop: "3px solid #6366f1", borderRadius: "50%", animation: "spin .8s linear infinite" }}/>
+      <div style={{ fontSize: "12px", letterSpacing: "3px", color: "#94a3b8", fontWeight: "600" }}>CARGANDO PANEL...</div>
+    </div>
+  );
+  if (fbError) return (
+    <div style={{ minHeight: "100vh", background: "#0e0c38", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+      <div style={{ background: "#ffffff", padding: "24px 32px", borderRadius: "12px", color: "#ef4444", fontSize: "14px", textAlign: "center", fontWeight: "600", boxShadow: "0 10px 25px rgba(0,0,0,0.1)" }}>{fbError}</div>
+    </div>
+  );
+
+  return (
+    <div className="dashboard-layout" style={{ display: "flex", minHeight: "100vh" }}>
+
+      {/* ══════════════════════════════════════
+          SIDEBAR (ESTILO KINSTA)
+      ══════════════════════════════════════ */}
+      <aside className="sidebar" style={{
+        width: "240px",
+        background: "#0e0c38",
+        color: "#ffffff",
+        display: "flex",
+        flexDirection: "column",
+        flexShrink: 0,
+        position: "sticky",
+        top: 0,
+        height: "100vh",
+        zIndex: 50
+      }}>
+        {/* Brand Header */}
+        <div style={{ padding: "28px 24px 20px", display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{
+            width: "36px",
+            height: "36px",
+            background: "linear-gradient(135deg, #6366f1, #4f46e5)",
+            borderRadius: "10px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#ffffff",
+            fontWeight: "800",
+            fontSize: "18px",
+            boxShadow: "0 4px 12px rgba(99, 102, 241, 0.4)"
+          }}>V</div>
+          <div>
+            <div style={{ fontSize: "17px", fontWeight: "800", letterSpacing: "-0.5px", color: "#ffffff" }}>ventas</div>
+            <div style={{ fontSize: "11px", color: "#94a3b8", marginTop: "1px" }}>Panel de Control</div>
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <nav style={{ flex: 1, padding: "16px 14px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px" }}>
+          {TABS.map(t => {
+            const activo = tab === t;
+            let icon = Icons.calendar;
+            if (t === "Todos") icon = Icons.dashboard;
+            else if (t === "Semanas") icon = Icons.layers;
+            else if (t === "Gastos") icon = Icons.wallet;
+            else if (t === "Historial") icon = Icons.history;
+
+            return (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  padding: "10px 14px",
+                  borderRadius: "8px",
+                  border: "none",
+                  background: activo ? "#53389e" : "transparent",
+                  color: activo ? "#ffffff" : "#94a3b8",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  fontSize: "13px",
+                  fontWeight: activo ? "600" : "500",
+                  textAlign: "left",
+                  transition: "all 0.15s ease",
+                  width: "100%"
+                }}
+                onMouseEnter={e => { if (!activo) { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.color = "#ffffff"; } }}
+                onMouseLeave={e => { if (!activo) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#94a3b8"; } }}
+              >
+                <span style={{ color: activo ? "#ffffff" : "#818cf8" }}>{icon}</span>
+                <span>{TAB_LBL[t]}</span>
+                {t === "Gastos" && gastos.length > 0 && (
+                  <span style={{ marginLeft: "auto", background: "#ef4444", color: "#ffffff", fontSize: "10px", fontWeight: "700", padding: "2px 7px", borderRadius: "10px" }}>
+                    {gastos.length}
+                  </span>
+                )}
+                {t === "Historial" && semanas.length > 0 && (
+                  <span style={{ marginLeft: "auto", background: "rgba(255,255,255,0.15)", color: "#ffffff", fontSize: "10px", fontWeight: "600", padding: "2px 7px", borderRadius: "10px" }}>
+                    {semanas.length}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* User Footer (Estilo Kinsta) */}
+        <div style={{
+          padding: "16px 20px",
+          borderTop: "1px solid rgba(255,255,255,0.08)",
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
+          background: "rgba(0,0,0,0.15)"
+        }}>
+          <div style={{
+            width: "34px",
+            height: "34px",
+            borderRadius: "50%",
+            background: "linear-gradient(135deg, #a855f7, #6366f1)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontWeight: "700",
+            fontSize: "13px",
+            color: "#ffffff"
+          }}>A</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: "13px", fontWeight: "600", color: "#ffffff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Aaron Moisés</div>
+            <div style={{ fontSize: "11px", color: "#94a3b8" }}>Administrador</div>
+          </div>
+        </div>
+      </aside>
+
+      {/* ══════════════════════════════════════
+          MAIN CONTENT AREA
+      ══════════════════════════════════════ */}
+      <main className="main-content" style={{ flex: 1, padding: "32px 36px", overflowX: "hidden" }}>
+
+        {/* Top Header Bar */}
+        <header style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "16px",
+          marginBottom: "28px"
+        }}>
+          <div>
+            <h1 style={{ fontSize: "28px", fontWeight: "800", color: "#0f172a", letterSpacing: "-0.5px" }}>
+              {tab === "Todos" ? "Panel de Control" : TAB_LBL[tab]}
+            </h1>
+            <div style={{ fontSize: "13px", color: "#64748b", marginTop: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+              <span>Semana {getWeekNum()}</span>
+              <span>•</span>
+              <span>{getWeekRange()}</span>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+            <button
+              onClick={handleGuardar}
+              disabled={guardando}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                background: "#53389e",
+                color: "#ffffff",
+                border: "none",
+                padding: "9px 16px",
+                borderRadius: "8px",
+                fontFamily: "inherit",
+                fontSize: "12px",
+                fontWeight: "600",
+                cursor: "pointer",
+                boxShadow: "0 2px 6px rgba(83, 56, 158, 0.3)",
+                transition: "all 0.15s"
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = "#432b85"}
+              onMouseLeave={e => e.currentTarget.style.background = "#53389e"}
+            >
+              {Icons.save}
+              <span>{guardando ? "Guardando..." : guardado ? "¡Guardado!" : "Guardar Semana"}</span>
+            </button>
+
+            <button
+              onClick={() => descargarPDF({
+                ventas, gastos, semTotal, semAvg, semMax, semCajas, totGastos, totSueldos, totOtros, utilidad, porDia, porEst,
+                modo: tab === "Semanas" ? "semanas" : "completo"
+              })}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                background: "#ffffff",
+                color: "#1e293b",
+                border: "1px solid #e2e8f0",
+                padding: "9px 16px",
+                borderRadius: "8px",
+                fontFamily: "inherit",
+                fontSize: "12px",
+                fontWeight: "600",
+                cursor: "pointer",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                transition: "all 0.15s"
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = "#f8fafc"}
+              onMouseLeave={e => e.currentTarget.style.background = "#ffffff"}
+            >
+              {Icons.download}
+              <span>Descargar PDF</span>
+            </button>
+
+            <button
+              onClick={handleClearWeek}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                background: "#fef2f2",
+                color: "#dc2626",
+                border: "1px solid #fecaca",
+                padding: "9px 16px",
+                borderRadius: "8px",
+                fontFamily: "inherit",
+                fontSize: "12px",
+                fontWeight: "600",
+                cursor: "pointer",
+                transition: "all 0.15s"
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = "#fee2e2"}
+              onMouseLeave={e => e.currentTarget.style.background = "#fef2f2"}
+            >
+              {Icons.trash}
+              <span>Borrar Semana</span>
+            </button>
+          </div>
+        </header>
+
+        {/* ── KPI CARDS GRID (ESTILO KINSTA) ── */}
+        {(() => {
+          const vs = isDia ? ventas.filter(v => v.dia === tab) : ventas;
+          const kTotal = vs.reduce((s, v) => s + (v.total || 0), 0);
+          const kAvg   = vs.length ? kTotal / vs.length : 0;
+          const kMax   = vs.length ? Math.max(...vs.map(v => v.total || 0)) : 0;
+          const kCajas = vs.reduce((s, v) => s + (v.cajas || 0), 0);
+          const kpis = isDia ? [
+            { label: "Total " + DL[tab], value: fmt(kTotal), accent: "#53389e", bg: "rgba(83, 56, 158, 0.08)" },
+            { label: "Promedio Venta", value: fmt(kAvg), accent: "#0284c7", bg: "rgba(2, 132, 199, 0.08)" },
+            { label: "Venta Más Alta", value: fmt(kMax), accent: "#059669", bg: "rgba(5, 150, 105, 0.08)" },
+            ...(tab === "Semanas" ? [] : [{ label: "Clientes", value: vs.length, accent: "#d97706", bg: "rgba(217, 119, 6, 0.08)" }]),
+            { label: "Total Cajas", value: kCajas + " cjs", accent: "#7c3aed", bg: "rgba(124, 58, 237, 0.08)" },
+          ] : [
+            { label: "Total Semana", value: fmt(semTotal), accent: "#53389e", bg: "rgba(83, 56, 158, 0.08)" },
+            { label: "Promedio / Cliente", value: fmt(semAvg), accent: "#0284c7", bg: "rgba(2, 132, 199, 0.08)" },
+            { label: "Venta Más Alta", value: fmt(semMax), accent: "#059669", bg: "rgba(5, 150, 105, 0.08)" },
+            { label: "Total Clientes", value: ventas.length, accent: "#d97706", bg: "rgba(217, 119, 6, 0.08)" },
+            { label: "Total Cajas", value: semCajas + " cjs", accent: "#7c3aed", bg: "rgba(124, 58, 237, 0.08)" },
+            { label: "Total Gastos", value: fmt(totGastos), accent: "#dc2626", bg: "rgba(220, 38, 38, 0.08)" },
+            { label: "Utilidad Neta", value: fmt(utilidad), accent: utilidad >= 0 ? "#10b981" : "#ef4444", bg: utilidad >= 0 ? "rgba(16, 185, 129, 0.08)" : "rgba(239, 68, 68, 0.08)" },
+          ];
+
+          return (
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gap: "16px",
+              marginBottom: "28px"
+            }}>
+              {kpis.map(k => (
+                <div
+                  key={k.label}
+                  className="animate-fade"
+                  style={{
+                    background: "#ffffff",
+                    borderRadius: "14px",
+                    padding: "20px 22px",
+                    border: "1px solid #eef2f6",
+                    boxShadow: "0 2px 8px rgba(15,23,42,0.03)",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "space-between"
+                  }}
+                >
+                  <div style={{ fontSize: "12px", fontWeight: "600", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px" }}>
+                    {k.label}
+                  </div>
+                  <div style={{ fontSize: "24px", fontWeight: "800", color: k.accent, letterSpacing: "-0.5px" }}>
+                    {k.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+
+        {/* ══════════════════════════════════════
+            TAB: VENTAS (Todos / Dias)
+        ══════════════════════════════════════ */}
+        {(tab === "Todos" || isDia) && (
+          <div className="animate-fade" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+
+            {/* Insights & Charts (Ocultar en Semanas) */}
+            {tab !== "Semanas" && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: "20px" }}>
+                
+                {/* Qué día se vendió más */}
+                <div style={{
+                  background: "#ffffff",
+                  borderRadius: "14px",
+                  padding: "22px 24px",
+                  border: "1px solid #eef2f6",
+                  boxShadow: "0 2px 8px rgba(15,23,42,0.03)"
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
+                    <div style={{ fontSize: "14px", fontWeight: "700", color: "#0f172a" }}>Ventas por Día</div>
+                    <span style={{ fontSize: "11px", fontWeight: "600", color: "#53389e", background: "rgba(83, 56, 158, 0.08)", padding: "3px 8px", borderRadius: "6px" }}>Semana</span>
+                  </div>
+                  {porDia.length === 0 ? (
+                    <div style={{ color: "#94a3b8", fontSize: "13px", padding: "16px 0", textAlign: "center" }}>Sin ventas registradas</div>
+                  ) : (
+                    porDia.map(d => (
+                      <div key={d.dia} style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "12px" }}>
+                        <div style={{ width: "65px", fontSize: "12px", fontWeight: "600", color: "#475569" }}>{DL[d.dia]}</div>
+                        <div style={{ flex: 1, height: "10px", background: "#f1f5f9", borderRadius: "10px", overflow: "hidden" }}>
+                          <div style={{
+                            height: "100%",
+                            width: ((d.total / dMax) * 100) + "%",
+                            background: "linear-gradient(90deg, #53389e, #818cf8)",
+                            borderRadius: "10px",
+                            transition: "width 0.8s ease"
+                          }}/>
+                        </div>
+                        <div style={{ width: "80px", fontSize: "12px", fontWeight: "700", color: "#0f172a", textAlign: "right" }}>{fmt(d.total)}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Qué estado vendió más */}
+                <div style={{
+                  background: "#ffffff",
+                  borderRadius: "14px",
+                  padding: "22px 24px",
+                  border: "1px solid #eef2f6",
+                  boxShadow: "0 2px 8px rgba(15,23,42,0.03)"
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
+                    <div style={{ fontSize: "14px", fontWeight: "700", color: "#0f172a" }}>Ventas por Estado / Lugar</div>
+                    <span style={{ fontSize: "11px", fontWeight: "600", color: "#0284c7", background: "rgba(2, 132, 199, 0.08)", padding: "3px 8px", borderRadius: "6px" }}>Destinos</span>
+                  </div>
+                  {porEst.length === 0 ? (
+                    <div style={{ color: "#94a3b8", fontSize: "13px", padding: "16px 0", textAlign: "center" }}>Sin ventas registradas</div>
+                  ) : (
+                    porEst.map(e => (
+                      <div key={e.lugar} style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "12px" }}>
+                        <div style={{ width: "100px", fontSize: "12px", fontWeight: "600", color: "#475569", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.lugar}</div>
+                        <div style={{ flex: 1, height: "10px", background: "#f1f5f9", borderRadius: "10px", overflow: "hidden" }}>
+                          <div style={{
+                            height: "100%",
+                            width: ((e.total / eMax) * 100) + "%",
+                            background: "linear-gradient(90deg, #06b6d4, #38bdf8)",
+                            borderRadius: "10px",
+                            transition: "width 0.8s ease"
+                          }}/>
+                        </div>
+                        <div style={{ width: "80px", fontSize: "12px", fontWeight: "700", color: "#0f172a", textAlign: "right" }}>{fmt(e.total)}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+              </div>
+            )}
+
+            {/* Formulario Nueva Venta */}
+            <div style={{
+              background: "#ffffff",
+              borderRadius: "14px",
+              padding: "24px",
+              border: "1px solid #eef2f6",
+              boxShadow: "0 2px 8px rgba(15,23,42,0.03)"
+            }}>
+              <div style={{ fontSize: "15px", fontWeight: "700", color: "#0f172a", marginBottom: "16px" }}>
+                {editId ? "Editar Venta" : "Registrar Nueva Venta Manual"}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", marginBottom: "16px" }}>
+                {tab === "Semanas" ? (
+                  <select value={form.cliente} onChange={e => setForm(f => ({ ...f, cliente: e.target.value, dia: "Semanas" }))} style={SI}>
+                    <option value="">Selecciona semana...</option>
+                    <option value="Semana 1">Semana 1</option>
+                    <option value="Semana 2">Semana 2</option>
+                    <option value="Semana 3">Semana 3</option>
+                    <option value="Semana 4">Semana 4</option>
+                  </select>
+                ) : (
+                  <input placeholder="Nombre del cliente" value={form.cliente} onChange={e => setForm(f => ({ ...f, cliente: e.target.value }))} style={SI}/>
+                )}
+                {tab !== "Semanas" && (
+                  <input placeholder="Lugar o estado" value={form.lugar} onChange={e => setForm(f => ({ ...f, lugar: e.target.value }))} style={SI}/>
+                )}
+                <input placeholder="Total ($)" type="number" value={form.total} onChange={e => setForm(f => ({ ...f, total: e.target.value }))} style={SI}/>
+                <input placeholder="Cajas" type="number" value={form.cajas} onChange={e => setForm(f => ({ ...f, cajas: e.target.value }))} style={SI}/>
+                {tab !== "Semanas" && (
+                  <select value={form.dia} onChange={e => setForm(f => ({ ...f, dia: e.target.value }))} style={SI}>
+                    {DIAS.map(d => <option key={d} value={d}>{DL[d]}</option>)}
+                  </select>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                <button
+                  onClick={handleSubmit}
+                  style={{
+                    background: "#53389e",
+                    color: "#ffffff",
+                    border: "none",
+                    padding: "10px 22px",
+                    borderRadius: "8px",
+                    fontFamily: "inherit",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                    boxShadow: "0 2px 6px rgba(83, 56, 158, 0.3)"
+                  }}
+                >
+                  {editId ? "Guardar Cambios" : "Agregar Venta"}
+                </button>
+                {editId && (
+                  <button
+                    onClick={() => { setEditId(null); setForm({ cliente: "", lugar: "", total: "", cajas: "", dia: "Lunes" }); }}
+                    style={{ background: "#f1f5f9", color: "#64748b", border: "none", padding: "10px 16px", borderRadius: "8px", fontFamily: "inherit", fontSize: "12px", cursor: "pointer" }}
+                  >
+                    Cancelar
+                  </button>
+                )}
+                {saved && (
+                  <span style={{ fontSize: "12px", color: "#10b981", fontWeight: "600", display: "flex", alignItems: "center", gap: "4px" }}>
+                    ✓ Registro guardado correctamente
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Tabla de Ventas (Estilo Kinsta) */}
+            <div style={{
+              background: "#ffffff",
+              borderRadius: "14px",
+              border: "1px solid #eef2f6",
+              boxShadow: "0 2px 8px rgba(15,23,42,0.03)",
+              overflow: "hidden"
+            }}>
+              {/* Table Toolbar */}
+              <div style={{ padding: "18px 24px", borderBottom: "1px solid #f1f5f9", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <div style={{ fontSize: "15px", fontWeight: "700", color: "#0f172a" }}>
+                    Registros de Ventas
+                  </div>
+                  <span style={{ background: "#f1f5f9", color: "#64748b", fontSize: "11px", fontWeight: "600", padding: "2px 8px", borderRadius: "10px" }}>
+                    {filtered.length}
+                  </span>
+                </div>
+
+                {/* Search */}
+                <div style={{ position: "relative", minWidth: "260px" }}>
+                  <span style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }}>
+                    {Icons.search}
+                  </span>
+                  <input
+                    placeholder="Buscar cliente o lugar..."
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    style={{ ...SI, paddingLeft: "36px", background: "#f8fafc" }}
+                  />
+                </div>
+              </div>
+
+              {/* Table */}
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                      {(tab === "Semanas" ? ["#", "Semana", "Cajas", "Total", "Acciones"] : ["#", "Día", "Cliente", "Lugar / Estado", "Cajas", "Total", "Acciones"]).map((h, i) => (
+                        <th key={i} style={{
+                          padding: "12px 20px",
+                          fontSize: "11px",
+                          fontWeight: "700",
+                          color: "#64748b",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.5px",
+                          textAlign: (h === "Total" || h === "Cajas") ? "right" : h === "Acciones" ? "center" : "left"
+                        }}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.length === 0 ? (
+                      <tr>
+                        <td colSpan={tab === "Semanas" ? 5 : 7} style={{ padding: "48px", textAlign: "center", color: "#94a3b8", fontSize: "13px" }}>
+                          No hay registros de ventas que coincidan con la búsqueda.
+                        </td>
+                      </tr>
+                    ) : (
+                      filtered.map((v, i) => (
+                        <tr
+                          key={v.id}
+                          style={{
+                            borderBottom: "1px solid #f1f5f9",
+                            transition: "background 0.15s"
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = "#f8fafc"}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                        >
+                          <td style={{ padding: "14px 20px", fontSize: "12px", color: "#94a3b8", width: "40px" }}>
+                            {String(i + 1).padStart(2, "0")}
+                          </td>
+                          {tab !== "Semanas" && (
+                            <td style={{ padding: "14px 20px" }}>
+                              <span style={{
+                                background: "rgba(83, 56, 158, 0.08)",
+                                color: "#53389e",
+                                padding: "4px 8px",
+                                borderRadius: "6px",
+                                fontSize: "11px",
+                                fontWeight: "600"
+                              }}>
+                                {DL[v.dia] || v.dia || "Lunes"}
+                              </span>
+                            </td>
+                          )}
+                          <td style={{ padding: "14px 20px", fontSize: "13px", fontWeight: "600", color: "#0f172a" }}>
+                            {v.cliente}
+                          </td>
+                          {tab !== "Semanas" && (
+                            <td style={{ padding: "14px 20px", fontSize: "13px", color: "#64748b" }}>
+                              📍 {v.lugar || "No especificado"}
+                            </td>
+                          )}
+                          <td style={{ padding: "14px 20px", textAlign: "right" }}>
+                            <span style={{
+                              background: "rgba(2, 132, 199, 0.08)",
+                              color: "#0284c7",
+                              padding: "4px 8px",
+                              borderRadius: "6px",
+                              fontSize: "11px",
+                              fontWeight: "700"
+                            }}>
+                              {v.cajas || 0} cjs
+                            </span>
+                          </td>
+                          <td style={{ padding: "14px 20px", fontSize: "14px", fontWeight: "800", color: "#0f172a", textAlign: "right" }}>
+                            {fmt(v.total)}
+                          </td>
+                          <td style={{ padding: "14px 20px", textAlign: "center" }}>
+                            <div style={{ display: "inline-flex", gap: "6px" }}>
+                              <button
+                                onClick={() => handleEdit(v)}
+                                title="Editar"
+                                style={{
+                                  background: "#f1f5f9",
+                                  border: "none",
+                                  color: "#0284c7",
+                                  cursor: "pointer",
+                                  padding: "6px 8px",
+                                  borderRadius: "6px",
+                                  fontSize: "12px",
+                                  transition: "all 0.15s"
+                                }}
+                                onMouseEnter={e => e.currentTarget.style.background = "#e0f2fe"}
+                                onMouseLeave={e => e.currentTarget.style.background = "#f1f5f9"}
+                              >
+                                ✎
+                              </button>
+                              <button
+                                onClick={() => handleDelete(v.id)}
+                                title="Eliminar"
+                                style={{
+                                  background: "#fef2f2",
+                                  border: "none",
+                                  color: "#dc2626",
+                                  cursor: "pointer",
+                                  padding: "6px 8px",
+                                  borderRadius: "6px",
+                                  fontSize: "12px",
+                                  transition: "all 0.15s"
+                                }}
+                                onMouseEnter={e => e.currentTarget.style.background = "#fee2e2"}
+                                onMouseLeave={e => e.currentTarget.style.background = "#fef2f2"}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: "#f8fafc", borderTop: "2px solid #e2e8f0" }}>
+                      <td colSpan={tab === "Semanas" ? 2 : 4} style={{ padding: "14px 20px", fontSize: "12px", fontWeight: "700", color: "#475569", textTransform: "uppercase" }}>
+                        {isDia ? "Total " + DL[tab] : "Gran Total Ventas"}
+                      </td>
+                      <td style={{ padding: "14px 20px", textAlign: "right", fontSize: "13px", fontWeight: "800", color: "#0284c7" }}>
+                        {filtCajas} cjs
+                      </td>
+                      <td style={{ padding: "14px 20px", textAlign: "right", fontSize: "16px", fontWeight: "800", color: "#0f172a" }}>
+                        {fmt(filtTotal)}
+                      </td>
+                      <td/>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            {/* Boton Resumen Final */}
+            <div style={{ textAlign: "center", marginTop: "12px" }}>
+              <button
+                onClick={() => setShowResumen(true)}
+                style={{
+                  background: "#ffffff",
+                  color: "#53389e",
+                  border: "1px solid #53389e",
+                  padding: "12px 32px",
+                  borderRadius: "8px",
+                  fontFamily: "inherit",
+                  fontSize: "13px",
+                  fontWeight: "700",
+                  cursor: "pointer",
+                  boxShadow: "0 2px 6px rgba(83, 56, 158, 0.1)",
+                  transition: "all 0.15s"
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#53389e"; e.currentTarget.style.color = "#ffffff"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "#ffffff"; e.currentTarget.style.color = "#53389e"; }}
+              >
+                Ver Resumen Ejecutivo de la Semana
+              </button>
+            </div>
+
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════
+            TAB: GASTOS
+        ══════════════════════════════════════ */}
+        {tab === "Gastos" && (
+          <div className="animate-fade" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+            
+            {/* Comparativa Ventas vs Gastos */}
+            <div style={{
+              background: "#ffffff",
+              borderRadius: "14px",
+              padding: "24px",
+              border: "1px solid #eef2f6",
+              boxShadow: "0 2px 8px rgba(15,23,42,0.03)"
+            }}>
+              <div style={{ fontSize: "15px", fontWeight: "700", color: "#0f172a", marginBottom: "16px" }}>
+                Balance Financiero: Ventas vs Gastos
+              </div>
+              {[
+                { label: "Ventas Totales", val: semTotal, color: "#10b981", max: semTotal },
+                { label: "Gastos Totales", val: totGastos, color: "#ef4444", max: semTotal }
+              ].map(r => (
+                <div key={r.label} style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "12px" }}>
+                  <div style={{ width: "110px", fontSize: "12px", fontWeight: "600", color: "#475569" }}>{r.label}</div>
+                  <div style={{ flex: 1, height: "12px", background: "#f1f5f9", borderRadius: "10px", overflow: "hidden" }}>
+                    <div style={{
+                      height: "100%",
+                      width: (r.max > 0 ? Math.min((r.val / r.max) * 100, 100) : 0) + "%",
+                      background: r.color,
+                      borderRadius: "10px",
+                      transition: "width 0.8s ease"
+                    }}/>
+                  </div>
+                  <div style={{ width: "100px", fontSize: "13px", fontWeight: "800", color: r.color, textAlign: "right" }}>{fmt(r.val)}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Formulario Gastos */}
+            <div style={{
+              background: "#ffffff",
+              borderRadius: "14px",
+              padding: "24px",
+              border: "1px solid #eef2f6",
+              boxShadow: "0 2px 8px rgba(15,23,42,0.03)"
+            }}>
+              <div style={{ fontSize: "15px", fontWeight: "700", color: "#0f172a", marginBottom: "16px" }}>
+                {gEditId ? "Editar Gasto" : "Registrar Nuevo Gasto"}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", marginBottom: "16px" }}>
+                <input placeholder="Concepto (ej: Sueldo Chofer)" value={gForm.concepto} onChange={e => setGForm(f => ({ ...f, concepto: e.target.value }))} style={SI}/>
+                <input placeholder="Monto ($)" type="number" value={gForm.monto} onChange={e => setGForm(f => ({ ...f, monto: e.target.value }))} style={SI}/>
+                <select value={gForm.tipo} onChange={e => setGForm(f => ({ ...f, tipo: e.target.value }))} style={SI}>
+                  <option value="Sueldo">Sueldo</option>
+                  <option value="Gasto">Gasto Operativo</option>
+                </select>
+              </div>
+              <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                <button
+                  onClick={handleGasto}
+                  style={{
+                    background: "#dc2626",
+                    color: "#ffffff",
+                    border: "none",
+                    padding: "10px 22px",
+                    borderRadius: "8px",
+                    fontFamily: "inherit",
+                    fontSize: "12px",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                    boxShadow: "0 2px 6px rgba(220, 38, 38, 0.3)"
+                  }}
+                >
+                  {gEditId ? "Guardar Gasto" : "Agregar Gasto"}
+                </button>
+                {gEditId && (
+                  <button
+                    onClick={() => { setGEditId(null); setGForm({ concepto: "", monto: "", tipo: "Sueldo" }); }}
+                    style={{ background: "#f1f5f9", color: "#64748b", border: "none", padding: "10px 16px", borderRadius: "8px", fontFamily: "inherit", fontSize: "12px", cursor: "pointer" }}
+                  >
+                    Cancelar
+                  </button>
+                )}
+                {gSaved && (
+                  <span style={{ fontSize: "12px", color: "#10b981", fontWeight: "600" }}>✓ Gasto guardado</span>
+                )}
+              </div>
+            </div>
+
+            {/* Tabla Gastos */}
+            <div style={{
+              background: "#ffffff",
+              borderRadius: "14px",
+              border: "1px solid #eef2f6",
+              boxShadow: "0 2px 8px rgba(15,23,42,0.03)",
+              overflow: "hidden"
+            }}>
+              <div style={{ padding: "18px 24px", borderBottom: "1px solid #f1f5f9" }}>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "#0f172a" }}>Desglose de Gastos</div>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                      {["#", "Concepto", "Tipo", "Monto", "Acciones"].map((h, i) => (
+                        <th key={i} style={{
+                          padding: "12px 20px",
+                          fontSize: "11px",
+                          fontWeight: "700",
+                          color: "#64748b",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.5px",
+                          textAlign: h === "Monto" ? "right" : h === "Acciones" ? "center" : "left"
+                        }}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gastos.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ padding: "48px", textAlign: "center", color: "#94a3b8", fontSize: "13px" }}>
+                          No hay gastos registrados en esta semana.
+                        </td>
+                      </tr>
+                    ) : (
+                      gastos.map((g, i) => (
+                        <tr key={g.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "14px 20px", fontSize: "12px", color: "#94a3b8", width: "40px" }}>
+                            {String(i + 1).padStart(2, "0")}
+                          </td>
+                          <td style={{ padding: "14px 20px", fontSize: "13px", fontWeight: "600", color: "#0f172a" }}>
+                            {g.concepto}
+                          </td>
+                          <td style={{ padding: "14px 20px" }}>
+                            <span style={{
+                              background: g.tipo === "Sueldo" ? "rgba(239, 68, 68, 0.08)" : "rgba(249, 115, 22, 0.08)",
+                              color: g.tipo === "Sueldo" ? "#dc2626" : "#ea580c",
+                              padding: "4px 8px",
+                              borderRadius: "6px",
+                              fontSize: "11px",
+                              fontWeight: "700",
+                              textTransform: "uppercase"
+                            }}>
+                              {g.tipo}
+                            </span>
+                          </td>
+                          <td style={{ padding: "14px 20px", fontSize: "14px", fontWeight: "800", color: "#dc2626", textAlign: "right" }}>
+                            {fmt(g.monto)}
+                          </td>
+                          <td style={{ padding: "14px 20px", textAlign: "center" }}>
+                            <div style={{ display: "inline-flex", gap: "6px" }}>
+                              <button onClick={() => handleGastoEdit(g)} style={{ background: "#f1f5f9", border: "none", color: "#0284c7", cursor: "pointer", padding: "6px 8px", borderRadius: "6px" }}>✎</button>
+                              <button onClick={() => handleGastoDelete(g.id)} style={{ background: "#fef2f2", border: "none", color: "#dc2626", cursor: "pointer", padding: "6px 8px", borderRadius: "6px" }}>✕</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: "#f8fafc", borderTop: "2px solid #e2e8f0" }}>
+                      <td colSpan={3} style={{ padding: "14px 20px", fontSize: "12px", fontWeight: "700", color: "#475569", textTransform: "uppercase" }}>Total Gastos</td>
+                      <td style={{ padding: "14px 20px", textAlign: "right", fontSize: "16px", fontWeight: "800", color: "#dc2626" }}>{fmt(totGastos)}</td>
+                      <td/>
+                    </tr>
+                    <tr style={{ background: "#ffffff" }}>
+                      <td colSpan={3} style={{ padding: "14px 20px", fontSize: "12px", fontWeight: "700", color: "#475569", textTransform: "uppercase" }}>Utilidad Neta Resultante</td>
+                      <td style={{ padding: "14px 20px", textAlign: "right", fontSize: "18px", fontWeight: "800", color: utilidad >= 0 ? "#10b981" : "#ef4444" }}>{fmt(utilidad)}</td>
+                      <td/>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════
+            TAB: HISTORIAL
+        ══════════════════════════════════════ */}
+        {tab === "Historial" && (
+          <div className="animate-fade" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            <div style={{ fontSize: "15px", fontWeight: "700", color: "#0f172a" }}>
+              Historial de Semanas Guardadas ({semanas.length})
+            </div>
+            {semanas.length === 0 ? (
+              <div style={{ background: "#ffffff", borderRadius: "14px", padding: "48px", textAlign: "center", color: "#94a3b8", border: "1px solid #eef2f6" }}>
+                Aún no has guardado ninguna semana en el historial.
+              </div>
+            ) : (
+              semanas.map(s => (
+                <div
+                  key={s.id}
+                  onClick={() => setShowSemana(showSemana === s.id ? null : s.id)}
+                  style={{
+                    background: "#ffffff",
+                    borderRadius: "14px",
+                    border: "1px solid #eef2f6",
+                    boxShadow: "0 2px 8px rgba(15,23,42,0.03)",
+                    cursor: "pointer",
+                    overflow: "hidden",
+                    transition: "all 0.15s"
+                  }}
+                >
+                  <div style={{ padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
+                    <div>
+                      <div style={{ fontSize: "11px", fontWeight: "700", color: "#53389e", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                        Semana {s.semana} · {s.ano}
+                      </div>
+                      <div style={{ fontSize: "14px", fontWeight: "700", color: "#0f172a", marginTop: "2px" }}>{s.rango}</div>
+                    </div>
+                    <div style={{ display: "flex", gap: "24px", alignItems: "center", flexWrap: "wrap" }}>
+                      <div>
+                        <div style={{ fontSize: "11px", color: "#64748b" }}>Ventas</div>
+                        <div style={{ fontSize: "15px", fontWeight: "800", color: "#0f172a" }}>{fmt(s.totalVentas)}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: "11px", color: "#64748b" }}>Gastos</div>
+                        <div style={{ fontSize: "15px", fontWeight: "800", color: "#dc2626" }}>{fmt(s.totalGastos)}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: "11px", color: "#64748b" }}>Cajas</div>
+                        <div style={{ fontSize: "15px", fontWeight: "800", color: "#7c3aed" }}>{s.totalCajas || 0} cjs</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: "11px", color: "#64748b" }}>Utilidad</div>
+                        <div style={{ fontSize: "15px", fontWeight: "800", color: s.utilidadNeta >= 0 ? "#10b981" : "#ef4444" }}>{fmt(s.utilidadNeta)}</div>
+                      </div>
+                      <button
+                        onClick={e => { e.stopPropagation(); handleDeleteSemana(s.id); }}
+                        style={{ background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", padding: "6px 12px", borderRadius: "6px", fontFamily: "inherit", fontSize: "11px", fontWeight: "600", cursor: "pointer" }}
+                      >
+                        Eliminar
+                      </button>
+                      <span style={{ color: "#94a3b8", fontSize: "14px" }}>{showSemana === s.id ? "▲" : "▼"}</span>
+                    </div>
+                  </div>
+
+                  {/* Detalle Expandido */}
+                  {showSemana === s.id && (
+                    <div style={{ borderTop: "1px solid #f1f5f9", padding: "20px 24px", background: "#f8fafc" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px" }}>
+                        <div>
+                          <div style={{ fontSize: "12px", fontWeight: "700", color: "#53389e", textTransform: "uppercase", marginBottom: "8px" }}>Ventas ({(s.ventas || []).length})</div>
+                          {(s.ventas || []).map((v, i) => (
+                            <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #e2e8f0", fontSize: "13px" }}>
+                              <span style={{ color: "#0f172a", fontWeight: "500" }}>{v.cliente} <span style={{ color: "#94a3b8" }}>· {v.lugar}</span></span>
+                              <span style={{ fontWeight: "700", color: "#0f172a" }}>{fmt(v.total)}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: "12px", fontWeight: "700", color: "#dc2626", textTransform: "uppercase", marginBottom: "8px" }}>Gastos ({(s.gastos || []).length})</div>
+                          {(s.gastos || []).length === 0 ? <div style={{ fontSize: "13px", color: "#94a3b8" }}>Sin gastos registrados</div> : null}
+                          {(s.gastos || []).map((g, i) => (
+                            <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #e2e8f0", fontSize: "13px" }}>
+                              <span style={{ color: "#0f172a" }}>{g.concepto} <span style={{ color: "#94a3b8", fontSize: "11px" }}>({g.tipo})</span></span>
+                              <span style={{ fontWeight: "700", color: "#dc2626" }}>{fmt(g.monto)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+      </main>
+
+      {/* ══ MODAL RESUMEN FINAL EJECUTIVO ══ */}
+      {showResumen && (
+        <div onClick={() => setShowResumen(false)} style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", backdropFilter: "blur(4px)" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#ffffff", borderRadius: "16px", width: "100%", maxWidth: "500px", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 40px rgba(0,0,0,0.2)" }}>
+            <div style={{ padding: "24px", borderBottom: "1px solid #f1f5f9", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: "12px", fontWeight: "700", color: "#53389e", textTransform: "uppercase", letterSpacing: "0.5px" }}>Resumen Ejecutivo</div>
+                <div style={{ fontSize: "18px", fontWeight: "800", color: "#0f172a" }}>Semana {getWeekNum()} · {new Date().getFullYear()}</div>
+                <div style={{ fontSize: "12px", color: "#64748b" }}>{getWeekRange()}</div>
+              </div>
+              <button onClick={() => setShowResumen(false)} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: "20px" }}>✕</button>
+            </div>
+            <div style={{ padding: "24px" }}>
+              <div style={{ marginBottom: "20px" }}>
+                <div style={{ fontSize: "12px", fontWeight: "700", color: "#53389e", textTransform: "uppercase", marginBottom: "10px" }}>Ventas por Destino</div>
+                {Object.values(ventas.reduce((a, v) => { const k = v.lugar || "?"; if (!a[k]) a[k] = { lugar: k, total: 0, cajas: 0, n: 0 }; a[k].total += v.total || 0; a[k].cajas += v.cajas || 0; a[k].n++; return a; }, {})).map((e, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", marginBottom: "6px" }}>
+                    <span style={{ fontSize: "13px", fontWeight: "600", color: "#0f172a" }}>📍 {e.lugar}</span>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: "13px", fontWeight: "800", color: "#0f172a" }}>{fmt(e.total)}</div>
+                      <div style={{ fontSize: "11px", color: "#64748b" }}>{e.cajas} cajas · {e.n} pedido{e.n !== 1 ? "s" : ""}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Total & Utilidad */}
+              <div style={{ background: utilidad >= 0 ? "rgba(16, 185, 129, 0.08)" : "rgba(239, 68, 68, 0.08)", borderRadius: "12px", padding: "18px", marginBottom: "20px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px", fontSize: "13px", color: "#475569" }}>
+                  <span>Ventas Totales</span>
+                  <span style={{ fontWeight: "700", color: "#0f172a" }}>{fmt(semTotal)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px", fontSize: "13px", color: "#475569" }}>
+                  <span>Gastos Totales</span>
+                  <span style={{ fontWeight: "700", color: "#dc2626" }}>- {fmt(totGastos)}</span>
+                </div>
+                <div style={{ height: "1px", background: "rgba(0,0,0,0.06)", marginBottom: "12px" }}/>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span style={{ fontSize: "13px", fontWeight: "700", color: "#0f172a", textTransform: "uppercase" }}>Utilidad Neta</span>
+                  <span style={{ fontSize: "22px", fontWeight: "800", color: utilidad >= 0 ? "#10b981" : "#ef4444" }}>{fmt(utilidad)}</span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => descargarPDF({ ventas, gastos, semTotal, semAvg, semMax, semCajas, totGastos, totSueldos, totOtros, utilidad, porDia, porEst, modo: tab === "Semanas" ? "semanas" : "completo" })}
+                style={{ width: "100%", background: "#53389e", color: "#ffffff", border: "none", padding: "12px", borderRadius: "8px", fontWeight: "700", fontSize: "13px", cursor: "pointer", marginBottom: "10px" }}
+              >
+                Descargar Reporte en PDF
+              </button>
+              <button
+                onClick={() => setShowResumen(false)}
+                style={{ width: "100%", background: "#f1f5f9", color: "#64748b", border: "none", padding: "10px", borderRadius: "8px", fontWeight: "600", fontSize: "13px", cursor: "pointer" }}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
